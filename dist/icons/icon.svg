@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="84" fill="#173f38"/>
+  <rect x="42" y="42" width="428" height="428" rx="52" fill="#f3e6c8" stroke="#b68c42" stroke-width="18"/>
+  <path d="M60 397c58-74 115-74 173 0s115 74 219 0v73H60z" fill="#315b79" opacity=".9"/>
+  <text x="256" y="335" text-anchor="middle" font-family="serif" font-size="238" font-weight="700" fill="#24211e">英</text>
+</svg>
+

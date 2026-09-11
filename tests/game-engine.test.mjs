@@ -1,0 +1,63 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  normalizeVocabulary,
+  getMonths,
+  getWeeks,
+  buildVocabularyPool,
+  parseCustomWords,
+  selectByD20,
+  pickDistinct
+} from "../dist/game-engine.js";
+
+const raw = { vocabulary: [
+  { entry_id: "a", level: "EIKEN 3", month: "April", month_order: "1", week: "1", word_number: "1", word: "borrow", part_of_speech: "verb", japanese_meaning: "借りる", example_sentence: "Can I borrow it?" },
+  { entry_id: "b", level: "EIKEN 3", month: "April", month_order: "1", week: "2", word_number: "1", word: "return" },
+  { entry_id: "c", level: "EIKEN 3", month: "May", month_order: "2", week: "1", word_number: "1", word: "improve" }
+] };
+const words = normalizeVocabulary(raw);
+
+test("normalizes the master export field names and missing help", () => {
+  assert.equal(words[0].japanese, "借りる");
+  assert.equal(words[0].example, "Can I borrow it?");
+  assert.equal(words[1].englishDefinition, "");
+});
+
+test("reads actual month and week structure", () => {
+  assert.deepEqual(getMonths(words, "EIKEN 3"), ["April", "May"]);
+  assert.deepEqual(getWeeks(words, "EIKEN 3", "April"), [1, 2]);
+});
+
+test("builds weekly, monthly, and review pools", () => {
+  assert.equal(buildVocabularyPool(words, { level: "EIKEN 3", month: "April", selection: "week-1" }).length, 1);
+  assert.equal(buildVocabularyPool(words, { level: "EIKEN 3", month: "April", selection: "mix" }).length, 2);
+  assert.equal(buildVocabularyPool(words, { level: "EIKEN 3", selection: "review", reviewFrom: "April", reviewTo: "May" }).length, 3);
+});
+
+test("parses lines, commas, and tabular custom sets", () => {
+  assert.equal(parseCustomWords("borrow\nreturn\nimprove").length, 3);
+  assert.equal(parseCustomWords("borrow, return, improve").length, 3);
+  const table = parseCustomWords("word\tpart of speech\tJapanese\nborrow\tverb\t借りる");
+  assert.equal(table.length, 1);
+  assert.equal(table[0].partOfSpeech, "verb");
+});
+
+test("maps an exact 20-word deck directly to the D20", () => {
+  const pool = Array.from({ length: 20 }, (_, index) => ({ id: `${index + 1}`, position: index + 1 }));
+  assert.equal(selectByD20(pool, 12).id, "12");
+});
+
+test("uses booklet positions for decks larger than 20", () => {
+  const pool = Array.from({ length: 60 }, (_, index) => ({ id: `${index + 1}`, position: (index % 20) + 1 }));
+  assert.equal(selectByD20(pool, 12, [], () => 0).position, 12);
+});
+
+test("lets a D20 reach words above position 20 in a larger weekly list", () => {
+  const pool = Array.from({ length: 30 }, (_, index) => ({ id: `${index + 1}`, position: index + 1 }));
+  assert.equal(selectByD20(pool, 1, [], () => 0.99).position, 21);
+});
+
+test("picks unique Word Bank cards", () => {
+  const selected = pickDistinct(words, 3, [], () => 0);
+  assert.equal(new Set(selected.map((word) => word.id)).size, 3);
+});

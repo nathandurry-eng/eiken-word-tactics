@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "vocabulary": [
+    {"entry_id":"S-G3-APR-W1-01","level":"EIKEN 3","month":"April","month_order":1,"week":1,"word_number":1,"word":"borrow","part_of_speech":"verb","japanese_meaning":"借りる","english_definition":"to use something and give it back later","japanese_explanation":"あとで返す約束で何かを使うこと。","example_sentence":"Can I borrow your pen for a minute?"},
+    {"entry_id":"S-G3-APR-W1-02","level":"EIKEN 3","month":"April","month_order":1,"week":1,"word_number":2,"word":"improve","part_of_speech":"verb","japanese_meaning":"改善する","english_definition":"to make something better","example_sentence":"I want to improve my English this year."},
+    {"entry_id":"S-P2-APR-W1-01","level":"EIKEN Pre-2","month":"April","month_order":1,"week":1,"word_number":1,"word":"support","part_of_speech":"verb","japanese_meaning":"支える、応援する","english_definition":"to help or encourage someone","example_sentence":"My friends support me when I feel nervous."},
+    {"entry_id":"S-G2-APR-W1-01","level":"EIKEN 2","month":"April","month_order":1,"week":1,"word_number":1,"word":"opportunity","part_of_speech":"noun","japanese_meaning":"機会、チャンス","english_definition":"a chance to do something","example_sentence":"I had an opportunity to study abroad."},
+    {"entry_id":"S-P1-APR-W1-01","level":"EIKEN Pre-1","month":"April","month_order":1,"week":1,"word_number":1,"word":"sustainable","part_of_speech":"adjective","japanese_meaning":"持続可能な","english_definition":"able to continue without using resources too quickly","example_sentence":"Cities need more sustainable transport."}
+  ]
+}
+
