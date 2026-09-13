@@ -8,7 +8,7 @@ import {
   pickDistinct
 } from "./game-engine.js";
 
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 const STORAGE = {
   settings: "eiken-word-tactics:settings:v1",
   customSets: "eiken-word-tactics:custom-sets:v1",
@@ -20,6 +20,14 @@ const levelMeta = {
   "EIKEN Pre-2": { label: "MEDIUM", className: "medium", note: "Balance support with independent retrieval." },
   "EIKEN 2": { label: "HARD", className: "hard", note: "Explain, compare, and persuade with precision." },
   "EIKEN Pre-1": { label: "CHALLENGE", className: "challenge", note: "Sustain demanding opinions and explanations." }
+};
+const themeByLevel = {
+  "EIKEN 4": "foundation",
+  "EIKEN 3": "easy",
+  "EIKEN Pre-2": "medium",
+  "EIKEN 2": "hard",
+  "EIKEN Pre-1": "challenge",
+  Custom: "easy"
 };
 const modeMeta = {
   supported: { label: "SUPPORTED", time: 45, bank: 7, note: "Choose from 3 words · sentence starters · easier help" },
@@ -75,6 +83,13 @@ function h(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 }
 
+function applyTheme(level = "home") {
+  const theme = level === "home" ? "home" : (themeByLevel[level] || "easy");
+  const colors = { home: "#173f38", foundation: "#53574d", easy: "#3f5f2d", medium: "#1c4c73", hard: "#8f241d", challenge: "#9b6a0a" };
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", colors[theme]);
+}
+
 function toast(message, tone = "info") {
   if (!toastRegion) return;
   const item = document.createElement("div");
@@ -128,6 +143,7 @@ function ensurePlayerNames() {
 
 function renderHome() {
   stopTimer();
+  applyTheme("home");
   const primary = ["EIKEN 3", "EIKEN Pre-2", "EIKEN 2", "EIKEN Pre-1"];
   const cards = primary.map((level) => levelCard(level)).join("");
   app.innerHTML = `<section class="home-view">
@@ -149,13 +165,14 @@ function renderHome() {
 function levelCard(level, compact = false) {
   const meta = levelMeta[level];
   const count = vocabulary.filter((item) => item.level === level).length;
-  return `<button class="level-card ${meta.className} ${compact ? "compact" : ""}" type="button" data-action="choose-level" data-level="${h(level)}" aria-label="Choose ${h(level)}, ${meta.label}">
+  return `<button class="level-card ${meta.className} ${compact ? "compact" : ""}" type="button" data-action="choose-level" data-level="${h(level)}" data-theme-preview="${meta.className}" aria-label="Choose ${h(level)}, ${meta.label}">
     <span>${meta.label}</span><strong>${h(level)}</strong><small>${h(meta.note)}</small><em>${count.toLocaleString()} words</em>
   </button>`;
 }
 
 function renderSetup() {
   normalizeSetupForLevel();
+  applyTheme(setup.level);
   const isCustom = Boolean(setup.customWords?.length);
   const months = isCustom ? ["Custom"] : getMonths(vocabulary, setup.level);
   const weeks = isCustom ? [] : getWeeks(vocabulary, setup.level, setup.month);
@@ -220,6 +237,7 @@ function countOptions() {
 }
 
 function renderCustom() {
+  applyTheme("EIKEN 3");
   const saved = customSets.map((set) => `<article class="saved-set"><div><strong>${h(set.name)}</strong><small>${set.words.length} words</small></div><button type="button" data-action="use-saved-set" data-set-id="${h(set.id)}">Use set</button><button class="danger-text" type="button" data-action="delete-saved-set" data-set-id="${h(set.id)}" aria-label="Delete ${h(set.name)}">Delete</button></article>`).join("");
   app.innerHTML = `<section class="custom-view">
     <header class="setup-titlebar"><button class="back-button" type="button" data-action="home" aria-label="Back">←</button><div><p class="eyebrow">TEACHER DECK</p><h1>Custom word set</h1></div></header>
@@ -359,8 +377,9 @@ function startTurn() {
 function renderGame() {
   const player = session.players[session.currentIndex];
   const level = levelMeta[setup.level] || { className: "easy", label: "CUSTOM" };
+  applyTheme(setup.level);
   app.innerHTML = `<section class="game-view ${level.className}">
-    <header class="turn-banner"><div><span>NOW SPEAKING</span><strong>${h(player.name)}</strong></div><div class="turn-meta"><span>${h(level.label)}</span><b>${h(modeMeta[setup.mode].label)}</b></div></header>
+    <header class="turn-banner"><div><span>NOW SPEAKING</span><strong>${h(player.name)}</strong><b class="current-score">${player.score} point${player.score === 1 ? "" : "s"}</b></div><div class="turn-meta"><span>${h(level.label)}</span><b>${h(modeMeta[setup.mode].label)}</b></div></header>
     <div class="game-layout">
       <div class="play-column">${renderMission()}${renderTargetPanel()}${session.phase === "speak" ? renderTimerAndJudge() : ""}</div>
       <aside class="game-sidebar">${renderScoreboard()}${renderTactics(player)}${renderWordBank()}<div class="teacher-controls"><button type="button" data-action="skip-player">Skip player</button><button type="button" data-action="undo-score" ${session.history.length ? "" : "disabled"}>Undo last score</button><button type="button" data-action="manual-end">End game</button></div></aside>
@@ -371,7 +390,20 @@ function renderGame() {
 
 function renderMission() {
   const mission = session.mission;
-  return `<article class="mission-card paper-panel"><header><span class="card-kicker">MISSION</span><em>${h(mission?.category || "SPEAK")}</em></header><h2>${h(mission?.title || "Use the word")}</h2><p>${h(mission?.prompt || "Use the target word naturally in spoken English.")}</p>${setup.mode === "supported" && mission?.starters?.length ? `<div class="starters"><span>Try starting with</span>${mission.starters.map((starter) => `<q>${h(starter)}</q>`).join("")}</div>` : ""}</article>`;
+  const art = missionArtKey(mission);
+  return `<article class="mission-card paper-panel mission-${art}" data-mission-art="${art}"><header><span class="card-kicker">MISSION CARD</span><em>${h(mission?.category || "SPEAK")}</em></header><div class="mission-copy"><h2>${h(mission?.title || "Use the word")}</h2><p>${h(mission?.prompt || "Use the target word naturally in spoken English.")}</p>${setup.mode === "supported" && mission?.starters?.length ? `<div class="starters"><span>Try starting with</span>${mission.starters.map((starter) => `<q>${h(starter)}</q>`).join("")}</div>` : ""}</div></article>`;
+}
+
+function missionArtKey(mission) {
+  const category = String(mission?.category || "").toLowerCase();
+  if (category.includes("opinion") || category.includes("agree")) return "opinion";
+  if (category.includes("question") || category.includes("follow")) return "question";
+  if (category.includes("answer") || category.includes("advice")) return "answer";
+  if (category.includes("example") || category.includes("explain")) return "example";
+  if (category.includes("story") || category.includes("experience")) return "story";
+  if (category.includes("compare") || category.includes("problem") || category.includes("choose")) return "connection";
+  if (category.includes("persuade") || category.includes("would")) return "combo";
+  return "sentence";
 }
 
 function renderTargetPanel() {
@@ -382,7 +414,7 @@ function renderTargetPanel() {
   const word = session.target;
   return `<section class="target-stage paper-panel target-reveal"><header><div><p class="eyebrow">TARGET WORD · D20 ${session.roll}</p><h2>${h(word.word)}</h2><span class="part-of-speech">(${h(shortPos(word.partOfSpeech))})</span></div>${setup.mode === "challenge" && session.bonusWord ? `<div class="bonus-word"><span>EXCELLENT BONUS</span><strong>+ ${h(session.bonusWord.word)}</strong><small>Use both words naturally</small></div>` : ""}</header>
     <div class="help-buttons">${helpButton("japanese", "日本語", settings.showJapanese, "japanese-help")}${helpButton("definition", "MEANING", settings.allowDefinition, "definition-help")}${helpButton("example", "EXAMPLE", settings.allowExample, "example-help")}</div>
-    <div class="help-reveals">${revealedHelp("japanese", word.japanese, "Japanese meaning not provided.")}${revealedHelp("definition", word.englishDefinition, "English definition not provided.")}${revealedHelp("example", word.example, "Example sentence not provided.")}</div>
+    <div class="help-reveals">${revealedHelp("japanese", word.japanese, "Japanese meaning not provided.", word.japaneseExplanation)}${revealedHelp("definition", word.englishDefinition, "English definition not provided.")}${revealedHelp("example", word.example, "Example sentence not provided.")}</div>
     ${session.swapMode ? `<p class="swap-callout">Choose a highlighted card in the Word Bank.</p>` : ""}</section>`;
 }
 
@@ -402,8 +434,9 @@ function helpButton(type, label, allowed, tacticId) {
   return `<button type="button" data-action="reveal-help" data-help="${type}" data-tactic="${tacticId}" aria-pressed="${revealed}" ${disabled ? "disabled title=\"A matching Tactic Card is needed\"" : ""}><span>${revealed ? "✓" : "+"}</span>${label}${!direct && !revealed ? `<small>${hasTactic ? "USE TACTIC" : "TACTIC NEEDED"}</small>` : ""}</button>`;
 }
 
-function revealedHelp(type, value, fallback) {
-  return session.reveals.has(type) ? `<div class="help-item ${type}"><span>${type === "japanese" ? "日本語" : type.toUpperCase()}</span><p lang="${type === "japanese" ? "ja" : "en"}">${h(value || fallback)}</p></div>` : "";
+function revealedHelp(type, value, fallback, detail = "") {
+  const labels = { japanese: "❀ 日本語の意味 ❀", definition: "❀ Meaning ❀", example: "❀ Example ❀" };
+  return session.reveals.has(type) ? `<div class="help-item ${type}"><span>${labels[type]}</span><div><p lang="${type === "japanese" ? "ja" : "en"}">${h(value || fallback)}</p>${type === "japanese" && detail ? `<small lang="ja">${h(detail)}</small>` : ""}</div></div>` : "";
 }
 
 function renderTimerAndJudge() {
@@ -411,16 +444,16 @@ function renderTimerAndJudge() {
 }
 
 function renderScoreboard() {
-  return `<section class="scoreboard paper-panel"><header><span>SCORE</span><small>${setup.endType === "manual" ? "Manual finish" : `${setup.endType === "points" ? "First to" : "Rounds"} ${setup.endTarget}`}</small></header><ol>${session.players.map((player, index) => `<li class="${index === session.currentIndex ? "current" : ""}"><span>${h(player.name)}</span><small>${player.turns} turn${player.turns === 1 ? "" : "s"}</small><strong>${player.score}</strong></li>`).join("")}</ol></section>`;
+  return `<section class="scoreboard paper-panel"><header><span>PLAYER SCORE</span><small>${setup.endType === "manual" ? "Manual finish" : `${setup.endType === "points" ? "First to" : "Rounds"} ${setup.endTarget}`}</small></header><ol>${session.players.map((player, index) => `<li class="${index === session.currentIndex ? "current" : ""}" ${index === session.currentIndex ? 'aria-current="true"' : ""}><span>${h(player.name)}</span><small>${index === session.currentIndex ? "NOW SPEAKING · " : ""}${player.turns} turn${player.turns === 1 ? "" : "s"}</small><strong>${player.score}</strong></li>`).join("")}</ol></section>`;
 }
 
 function renderTactics(player) {
   if (!settings.tacticCards) return "";
-  return `<section class="tactics-panel paper-panel"><header><span>TACTIC HAND</span><small>${player.tactics.length} left</small></header><div class="tactic-list">${player.tactics.length ? player.tactics.map((card) => `<button type="button" data-action="use-tactic" data-instance-id="${h(card.instanceId)}"><b>${h(card.icon)}</b><span><strong>${h(card.name)}</strong><small>${h(card.description)}</small></span></button>`).join("") : `<p class="empty-hand">No Tactics left.</p>`}</div></section>`;
+  return `<section class="tactics-panel paper-panel"><header><span>TACTIC HAND</span><small>${player.tactics.length} left</small></header><div class="tactic-list">${player.tactics.length ? player.tactics.map((card) => `<button type="button" data-action="use-tactic" data-instance-id="${h(card.instanceId)}" data-tactic-id="${h(card.id)}"><b>${h(card.icon)}</b><span><strong>${h(card.name)}</strong><small>${h(card.description)}</small></span></button>`).join("") : `<p class="empty-hand">No Tactics left.</p>`}</div></section>`;
 }
 
 function renderWordBank() {
-  return `<section class="word-bank paper-panel ${session.swapMode ? "swap-active" : ""}"><header><span>WORD BANK</span><small>${session.swapMode ? "Choose a card" : "Face-up words"}</small></header><div>${session.bank.map((word, index) => `<button type="button" data-action="bank-word" data-bank-index="${index}" ${session.swapMode ? "" : "disabled"}><strong>${h(word.word)}</strong><small>${h(shortPos(word.partOfSpeech))}</small></button>`).join("")}</div></section>`;
+  return `<section class="word-bank paper-panel ${session.swapMode ? "swap-active" : ""}"><header><span>WORD BANK</span><small>${session.swapMode ? "Choose a card" : "Face-up words"}</small></header><div>${session.bank.map((word, index) => `<button type="button" data-action="bank-word" data-bank-index="${index}" ${session.swapMode ? "" : "disabled"}><span class="bank-number">${index + 1}</span><strong>${h(word.word)}</strong><small>${h(shortPos(word.partOfSpeech))}</small></button>`).join("")}</div></section>`;
 }
 
 function rollD20() {
@@ -631,6 +664,7 @@ function finishGame() {
 }
 
 function renderResults() {
+  applyTheme(setup.level);
   const maxScore = Math.max(...session.players.map((player) => player.score));
   const winners = session.players.filter((player) => player.score === maxScore);
   const scores = [...session.players].sort((a, b) => b.score - a.score).map((player, index) => `<li><span>${index + 1}</span><div><strong>${h(player.name)}</strong><small>${player.successful} successful · ${player.excellent} excellent · ${player.turns} turns</small></div><b>${player.score}</b></li>`).join("");
@@ -648,6 +682,7 @@ function renderResults() {
 }
 
 function renderReview() {
+  applyTheme(setup.level);
   const words = [...session.encountered.values()];
   app.innerHTML = `<section class="review-view"><header class="setup-titlebar"><button class="back-button" type="button" data-action="results" aria-label="Back to results">←</button><div><p class="eyebrow">QUICK REVIEW</p><h1>Words from this game</h1><p>Open only the support students need.</p></div></header><div class="review-list">${words.length ? words.map((word) => `<article class="paper-panel review-word"><header><div><h2>${h(word.word)}</h2><span>(${h(shortPos(word.partOfSpeech))})</span></div>${session.difficulties.has(word.id) ? `<em>TRY AGAIN</em>` : `<em>ENCOUNTERED</em>`}</header><details><summary>日本語</summary><p lang="ja">${h(word.japanese || "Japanese meaning not provided.")}</p></details><details><summary>Meaning</summary><p>${h(word.englishDefinition || "English definition not provided.")}</p></details><details><summary>Example</summary><p>${h(word.example || "Example sentence not provided.")}</p></details></article>`).join("") : `<p class="paper-panel empty-review">No words were revealed in this game.</p>`}</div><div class="result-actions"><button class="primary-button" type="button" data-action="play-again">Play again</button><button class="secondary-button" type="button" data-action="results">Back to results</button></div></section>`;
   focusMain();

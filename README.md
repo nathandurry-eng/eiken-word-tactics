@@ -2,7 +2,7 @@
 
 EIKEN Word Tactics is an offline-ready classroom speaking game for Japanese students. Its central rhythm is **retrieve → speak → receive help if necessary**: students see the target word first, attempt a communicative mission, and reveal support only when it is needed.
 
-Version: **v1.0.0**
+Version: **v1.1.0**
 
 ## What is included
 
@@ -20,6 +20,8 @@ Version: **v1.0.0**
 - Results, lightweight word review, and session statistics
 - Custom pasted word sets saved in `localStorage`
 - Installable PWA with cached static data for temporary offline use
+- A four-theme physical card-deck visual system built from the supplied Easy, Medium, Hard, and Challenge artwork
+- Illustrated Mission Cards and Tactic Cards, with responsive image derivatives for projector, tablet, and phone layouts
 - Keyboard focus styling, large touch targets, reduced-motion support, and responsive layouts
 
 ## Local development
@@ -54,12 +56,17 @@ dist/
   manifest.webmanifest
   sw.js
   icons/
+  assets/
+    art/                  # responsive Easy/Medium/Hard/Challenge scenery
+    cards/                # optimized Mission and Tactic card artwork
+    decor/                # paper texture, seal, plaque, and deck emblem
   data/
     vocabulary.json      # authoritative bundled database
     sample-vocabulary.json
     missions.json        # teacher-editable mission cards
     tactics.json         # tactic availability and quantities
 scripts/
+  build-visual-assets.py  # rebuilds optimized WebP derivatives from the supplied originals
   serve.mjs
   validate-build.mjs
 tests/
@@ -86,22 +93,35 @@ npm test
 npm run build
 ```
 
-Then change the cache name near the top of `dist/sw.js` (for example, from `eiken-word-tactics-v1.0.0` to `eiken-word-tactics-v1.0.1`) so previously installed copies refresh their offline data promptly.
+Then change the cache name near the top of `dist/sw.js` (for example, from `eiken-word-tactics-v1.1.0` to `eiken-word-tactics-v1.1.1`) so previously installed copies refresh their offline data promptly.
 
 ## Editing missions and tactics
 
 - Edit `dist/data/missions.json` to add or revise prompts. Each mission has an `id`, `category`, `title`, `prompt`, optional `starters`, and a `modes` list containing `supported`, `standard`, and/or `challenge`.
 - Edit `dist/data/tactics.json` to change quantities or descriptions. Keep the eight tactic IDs unchanged because the game behavior uses them.
 
-## GitHub setup
+## Rebuilding the supplied artwork
 
-This checkout already contains Git history but no remote. Create an empty GitHub repository, then run:
+The production-ready WebP derivatives are committed under `dist/assets/`, so Cloudflare does not need Python or Pillow. On the original Windows workstation, the artwork can be regenerated from the source PNG files with:
 
 ```bash
-git remote add origin https://github.com/YOUR-NAME/eiken-word-tactics.git
+python scripts/build-visual-assets.py
+```
+
+The script preserves the original images and rewrites only the optimized derivatives in `dist/assets/`.
+
+## GitHub repository
+
+The `main` branch is connected to:
+
+`https://github.com/nathandurry-eng/eiken-word-tactics`
+
+To publish a completed update:
+
+```bash
 git add .
-git commit -m "Build EIKEN Word Tactics v1"
-git push -u origin main
+git commit -m "Describe the update"
+git push origin main
 ```
 
 Do not commit classroom-only custom sets: they stay in the browser’s `localStorage`.
