@@ -2,24 +2,23 @@
 
 EIKEN Word Tactics is an offline-ready classroom speaking game for Japanese students. Its central rhythm is **retrieve → speak → receive help if necessary**: students see the target word first, attempt a communicative mission, and reveal support only when it is needed.
 
-Version: **v1.1.0**
+Version: **v1.2.0**
 
 ## What is included
 
 - All five vocabulary levels in the supplied master export: EIKEN 4, EIKEN 3, EIKEN Pre-2, EIKEN 2, and EIKEN Pre-1
 - Real month/week filtering, monthly mix, and multi-month review ranges
 - Supported, Standard, and Challenge play modes
-- Animated D20 selection, including direct 1–20 booklet positions
+- Shuffled-bag selection for fair full-pool coverage; literal D20 mapping only for exact 20-word lists
 - Optional EIKEN Booklet Mode
 - 24 editable communicative missions
-- Face-up Word Bank with animated Word Swap replacement
-- Eight configurable Tactic types, two random cards per player/team
-- Progressive Japanese, English definition, and example help
-- 2–8 players or 2–4 teams, scorekeeping, skip, and undo
-- Configurable timer, optional final countdown sound, rounds/points/manual endings
-- Results, lightweight word review, and session statistics
+- A safe face-up Word Swap plus a guaranteed Reroll or Extra Time tactic for every participant
+- Free Japanese, English definition, and example help after the initial attempt, followed by one unscored supported retry
+- 2–8 players or 2–4 teams, atomic 0/1/2 judgement, skip, and full-state undo (including after a win)
+- One deadline-based timer, visibility pause, optional countdown sound, rounds/points/manual endings
+- Versioned lesson resume, later-turn review queue, final recall, results, word review, and session statistics
 - Custom pasted word sets saved in `localStorage`
-- Installable PWA with cached static data for temporary offline use
+- Installable PWA with a validated offline shell and updates activated between lessons
 - A four-theme physical card-deck visual system built from the supplied Easy, Medium, Hard, and Challenge artwork
 - Illustrated Mission Cards and Tactic Cards, with responsive image derivatives for projector, tablet, and phone layouts
 - Keyboard focus styling, large touch targets, reduced-motion support, and responsive layouts
@@ -52,6 +51,9 @@ dist/
   index.html
   app.js                 # UI, game flow, settings, storage
   game-engine.js         # testable vocabulary/custom-list/D20 logic
+  session-engine.js      # atomic turns, undo snapshots, resume, review queue
+  timer-engine.js        # single deadline-derived timer
+  mission-engine.js      # compatibility, fallbacks, and level scaling
   styles.css
   manifest.webmanifest
   sw.js
@@ -62,15 +64,21 @@ dist/
     decor/                # paper texture, seal, plaque, and deck emblem
   data/
     vocabulary.json      # authoritative bundled database
-    sample-vocabulary.json
+    vocabulary-overrides.json # six reviewed, auditable priority corrections
+    runtime/             # generated compact per-level data with quality flags
     missions.json        # teacher-editable mission cards
     tactics.json         # tactic availability and quantities
 scripts/
-  build-visual-assets.py  # rebuilds optimized WebP derivatives from the supplied originals
+  build-runtime-vocabulary.mjs
+  build-visual-assets.py  # manifest-driven WebP derivative builder
+  visual-assets.manifest.example.json
   serve.mjs
   validate-build.mjs
 tests/
   game-engine.test.mjs
+  mission-engine.test.mjs
+  session-engine.test.mjs
+  timer-engine.test.mjs
 ```
 
 ## Updating `vocabulary.json`
@@ -86,26 +94,28 @@ Replace [`dist/data/vocabulary.json`](dist/data/vocabulary.json) with the new JS
 
 Every usable row needs only a non-empty `word`. Missing Japanese, definition, or example content produces a friendly “not provided” message rather than stopping the game. Level, month, and week controls are derived from the actual file; list sizes are never assumed.
 
-After replacing the file, run:
+The authoritative source file stays unchanged. The build applies only the reviewed entries in `vocabulary-overrides.json`, generates compact per-level files under `dist/data/runtime/`, and records quality flags for future editorial work. After replacing the source file, run:
 
 ```bash
 npm test
 npm run build
 ```
 
-Then change the cache name near the top of `dist/sw.js` (for example, from `eiken-word-tactics-v1.1.0` to `eiken-word-tactics-v1.1.1`) so previously installed copies refresh their offline data promptly.
+Then increment the matching app and service-worker versions so installed copies receive the new runtime data between lessons.
 
 ## Editing missions and tactics
 
-- Edit `dist/data/missions.json` to add or revise prompts. Each mission has an `id`, `category`, `title`, `prompt`, optional `starters`, and a `modes` list containing `supported`, `standard`, and/or `challenge`.
-- Edit `dist/data/tactics.json` to change quantities or descriptions. Keep the eight tactic IDs unchanged because the game behavior uses them.
+- Edit `dist/data/missions.json` to revise the 24 reviewed prompts. Keep their compatibility, mode, level, and fallback metadata valid; the build checks key corrections.
+- Edit `dist/data/tactics.json` only for Word Swap, Reroll, and Extra Time. Every participant receives Word Swap plus one of the two flexible tactics.
 
 ## Rebuilding the supplied artwork
 
 The production-ready WebP derivatives are committed under `dist/assets/`, so Cloudflare does not need Python or Pillow. On the original Windows workstation, the artwork can be regenerated from the source PNG files with:
 
+Copy `scripts/visual-assets.manifest.example.json`, point it at the untracked source artwork (or pass `--source-dir` for relative paths), then run:
+
 ```bash
-python scripts/build-visual-assets.py
+python scripts/build-visual-assets.py --manifest path/to/visual-assets.local.json
 ```
 
 The script preserves the original images and rewrites only the optimized derivatives in `dist/assets/`.
@@ -152,7 +162,7 @@ Cloudflare Pages will rebuild automatically after each push to the production br
 
 ## PWA and offline notes
 
-The first successful visit installs the service worker and caches the app shell, missions, tactics, and vocabulary database. After that, a temporary network interruption should not stop an active lesson. Browsers control when service-worker updates become active; closing all old tabs and reopening the app is the quickest way to receive a newly deployed version.
+The first successful visit installs the service worker and caches the essential app shell, missions, tactics, and compact vocabulary data. Optional artwork failures do not block installation. A temporary network interruption should not stop an active lesson, and waiting updates activate automatically once no lesson is in progress.
 
 ## Data and privacy
 

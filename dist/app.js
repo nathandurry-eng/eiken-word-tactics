@@ -5,14 +5,31 @@ import {
   buildVocabularyPool,
   parseCustomWords,
   selectByD20,
-  pickDistinct
+  pickDistinct,
+  drawFromShuffledBag,
+  validateEndTarget
 } from "./game-engine.js";
+import {
+  makeIdentity,
+  isCurrentTurn,
+  claimTurnOutcome,
+  guaranteedHand,
+  queueForLaterReview,
+  takeEligibleReview,
+  captureTurnState,
+  restoreTurnState,
+  serializeResume,
+  validateResume
+} from "./session-engine.js";
+import { TurnTimer } from "./timer-engine.js";
+import { chooseMission } from "./mission-engine.js";
 
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const STORAGE = {
   settings: "eiken-word-tactics:settings:v1",
   customSets: "eiken-word-tactics:custom-sets:v1",
-  recentSetup: "eiken-word-tactics:recent-setup:v1"
+  recentSetup: "eiken-word-tactics:recent-setup:v1",
+  resume: "eiken-word-tactics:session:v2"
 };
 const levelMeta = {
   "EIKEN 4": { label: "FOUNDATION", className: "foundation", note: "Extra support for the Grade 4 deck." },
@@ -30,9 +47,9 @@ const themeByLevel = {
   Custom: "easy"
 };
 const modeMeta = {
-  supported: { label: "SUPPORTED", time: 45, bank: 7, note: "Choose from 3 words · sentence starters · easier help" },
-  standard: { label: "STANDARD", time: 30, bank: 5, note: "One word · hidden help · 5-card Word Bank" },
-  challenge: { label: "CHALLENGE", time: 20, bank: 3, note: "Less time · harder missions · two-word bonus" }
+  supported: { label: "SUPPORTED", time: 45, bank: 3, note: "Choose from 3 words · sentence starters · teacher-controlled help" },
+  standard: { label: "STANDARD", time: 30, bank: 3, note: "One word · hidden help · 3-card Word Bank" },
+  challenge: { label: "CHALLENGE", time: 20, bank: 2, note: "Harder missions · optional two-word stretch" }
 };
 const defaults = {
   defaultLevel: "EIKEN 3",
@@ -49,6 +66,7 @@ const defaults = {
 
 const app = document.querySelector("#app");
 const toastRegion = document.querySelector("#toast-region");
+const offlineStatus = document.querySelector("#offline-status");
 let vocabulary = [];
 let missions = [];
 let tacticConfig = { cardsPerPlayer: 2, tactics: [] };
@@ -57,7 +75,18 @@ let settings = { ...defaults, ...savedSettings, timers: { ...defaults.timers, ..
 let customSets = safeLoad(STORAGE.customSets, []);
 let setup = createInitialSetup();
 let session = null;
-let timerInterval = null;
+let resumeCandidate = null;
+let audioContext = null;
+let lifecycleVersion = 0;
+let waitingWorker = null;
+const delayedCallbacks = new Set();
+const turnTimer = new TurnTimer(
+  (state, previous) => {
+    updateTimerDisplay();
+    if (state && previous && state.remaining < previous && state.remaining <= 5 && state.remaining > 0) playTick();
+  },
+  () => toast("Time. The teacher can judge, allow help, or use a supported retry.")
+);
 
 function safeLoad(key, fallback) {
   try {
@@ -77,6 +106,83 @@ function safeSave(key, value) {
     toast("This browser could not save that setting. You can keep playing.", "warning");
     return false;
   }
+}
+
+function clearSavedSession() {
+  try { localStorage.removeItem(STORAGE.resume); } catch { /* Storage is optional. */ }
+  resumeCandidate = null;
+}
+
+function setOfflineStatus(message) {
+  if (offlineStatus) offlineStatus.textContent = message;
+}
+
+function activateWaitingUpdate() {
+  if (!waitingWorker || (session && !session.ended)) return;
+  waitingWorker.postMessage({ type: "ACTIVATE_UPDATE" });
+  waitingWorker = null;
+  setOfflineStatus("Updating after lesson…");
+}
+
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return setOfflineStatus("Online only");
+  try {
+    const registration = await navigator.serviceWorker.register("./sw.js");
+    const handleWaiting = (worker) => {
+      waitingWorker = worker;
+      if (session && !session.ended) setOfflineStatus("Update ready after lesson");
+      else activateWaitingUpdate();
+    };
+    if (registration.waiting) handleWaiting(registration.waiting);
+    registration.addEventListener("updatefound", () => {
+      const worker = registration.installing;
+      worker?.addEventListener("statechange", () => {
+        if (worker.state === "installed" && navigator.serviceWorker.controller) handleWaiting(worker);
+      });
+    });
+    await navigator.serviceWorker.ready;
+    if (!waitingWorker) setOfflineStatus("Offline ready");
+  } catch (error) {
+    console.warn("Service worker:", error);
+    setOfflineStatus("Offline unavailable");
+    toast("Offline setup did not finish. The online game still works.", "warning");
+  }
+}
+
+function persistSession() {
+  if (!session || session.ended) return clearSavedSession();
+  const snapshot = serializeResume(session, APP_VERSION);
+  if (snapshot) safeSave(STORAGE.resume, snapshot);
+}
+
+function cancelDelayedCallbacks() {
+  lifecycleVersion += 1;
+  for (const id of delayedCallbacks) clearTimeout(id);
+  delayedCallbacks.clear();
+}
+
+function scheduleForCurrentTurn(callback, delay = 0) {
+  const expectedLifecycle = lifecycleVersion;
+  const expectedSession = session?.id;
+  const expectedTurn = session?.turnId;
+  const id = setTimeout(() => {
+    delayedCallbacks.delete(id);
+    if (expectedLifecycle !== lifecycleVersion || !isCurrentTurn(session, expectedSession, expectedTurn)) return;
+    callback();
+  }, delay);
+  delayedCallbacks.add(id);
+  return id;
+}
+
+function navigationPause({ save = true } = {}) {
+  stopTimer();
+  cancelDelayedCallbacks();
+  if (save) persistSession();
+}
+
+function turnDuration() {
+  const configured = Number(session?.settings?.timers?.[session?.config?.mode] ?? settings.timers[setup.mode]);
+  return session?.config?.level === "EIKEN Pre-1" ? Math.max(60, configured) : configured;
 }
 
 function h(value) {
@@ -142,7 +248,7 @@ function ensurePlayerNames() {
 }
 
 function renderHome() {
-  stopTimer();
+  navigationPause();
   applyTheme("home");
   const primary = ["EIKEN 3", "EIKEN Pre-2", "EIKEN 2", "EIKEN Pre-1"];
   const cards = primary.map((level) => levelCard(level)).join("");
@@ -152,6 +258,7 @@ function renderHome() {
       <h1>Retrieve it.<br>Say it.</h1>
       <p class="lead">Choose a deck and get students speaking. Meanings stay hidden until help is genuinely needed.</p>
     </header>
+    ${(session && !session.ended) || resumeCandidate ? `<aside class="resume-banner paper-panel"><div><strong>Paused classroom game</strong><span>Resume with the same players, words, scores, resources, and paused timer.</span></div><button class="primary-button" type="button" data-action="resume-session">Resume game</button><button class="text-button" type="button" data-action="discard-resume">Discard</button></aside>` : ""}
     <div class="level-grid">${cards}</div>
     <div class="home-tools">
       ${levelCard("EIKEN 4", true)}
@@ -255,6 +362,7 @@ function renderCustom() {
 }
 
 function openSettings() {
+  if (session && !session.ended) { stopTimer(); persistSession(); }
   let dialog = document.querySelector("#settings-dialog");
   if (!dialog) {
     dialog = document.createElement("dialog");
@@ -308,6 +416,11 @@ function saveSettings() {
 
 function startGame() {
   ensurePlayerNames();
+  if (setup.endType !== "manual") {
+    const target = validateEndTarget(setup.endTarget);
+    if (!target) return toast("Choose a whole-number finish target from 1 to 50.", "warning");
+    setup.endTarget = target;
+  }
   setup.playerNames = setup.playerNames.map((name, index) => name.trim() || `${setup.playKind === "teams" ? "Team" : "Player"} ${String.fromCharCode(65 + index)}`);
   const pool = buildVocabularyPool(vocabulary, setup);
   if (!pool.length) return toast("No words match this selection. Choose another list.", "warning");
@@ -316,41 +429,31 @@ function startGame() {
 }
 
 function beginSession(pool) {
-  stopTimer();
-  const tacticDeck = buildTacticDeck();
+  navigationPause({ save: false });
+  clearSavedSession();
+  const effectiveSettings = structuredClone(settings);
   const players = setup.playerNames.slice(0, setup.playerCount).map((name, index) => ({
     id: `player-${index + 1}`, name, score: 0, turns: 0, successful: 0, excellent: 0, words: [],
-    tactics: settings.tacticCards ? dealTactics(tacticDeck, tacticConfig.cardsPerPlayer || 2) : []
+    tactics: effectiveSettings.tacticCards ? guaranteedHand(tacticConfig.tactics, index) : []
   }));
   session = {
-    config: structuredClone(setup), pool: [...pool], players, currentIndex: 0, bank: [], phase: "roll", mission: null,
+    id: makeIdentity("session"), config: structuredClone(setup), settings: effectiveSettings, pool: [...pool], players, currentIndex: 0, bank: [], phase: "roll", mission: null,
     target: null, targetChoices: [], roll: null, reveals: new Set(), recentWordIds: [], recentMissionIds: [],
-    encountered: new Map(), difficulties: new Map(), history: [], timer: { duration: settings.timers[setup.mode], remaining: settings.timers[setup.mode], running: false },
-    swapMode: false, secondChance: false, bonusWord: null, ended: false
+    encountered: new Map(), difficulties: new Map(), history: [], timer: { duration: 0, remaining: 0, running: false, deadline: null },
+    judgedTurnIds: new Set(), bagState: { bag: [], lastId: "" }, reviewQueue: [], completedTurns: 0,
+    swapMode: false, pendingSwapId: null, targetChangeUsed: false, supportedRetryUsed: false, attemptStarted: false,
+    helpedThisTurn: false, bonusWord: null, ended: false, recall: null,
+    literalD20: pool.length === 20 && (String(setup.selection).startsWith("week-") || Boolean(setup.customWords?.length))
   };
   refillBank();
   startTurn();
 }
 
-function buildTacticDeck() {
-  return tacticConfig.tactics.flatMap((card) => Array.from({ length: Math.max(0, Number(card.quantity) || 0) }, (_, index) => ({ ...card, instanceId: `${card.id}-${index}-${Math.random()}` })));
-}
-
-function dealTactics(deck, count) {
-  const hand = [];
-  while (deck.length && hand.length < count) {
-    const distinct = deck.map((card, index) => ({ card, index })).filter(({ card }) => !hand.some((held) => held.id === card.id));
-    const choices = distinct.length ? distinct : deck.map((card, index) => ({ card, index }));
-    const choice = choices[Math.floor(Math.random() * choices.length)];
-    hand.push(deck.splice(choice.index, 1)[0]);
-  }
-  return hand;
-}
-
-function bankCount() { return settings.wordBankCount || modeMeta[setup.mode].bank; }
+function bankCount() { return session.settings.wordBankCount || modeMeta[session.config.mode].bank; }
 
 function refillBank() {
-  const needed = bankCount() - session.bank.length;
+  const maximum = Math.max(0, Math.min(bankCount(), session.pool.length - (session.target ? 1 : 0)));
+  const needed = maximum - session.bank.length;
   if (needed <= 0) return;
   const excluded = [...session.bank.map((word) => word.id), ...session.recentWordIds, session.target?.id].filter(Boolean);
   session.bank.push(...pickDistinct(session.pool, needed, excluded));
@@ -358,30 +461,37 @@ function refillBank() {
 
 function startTurn() {
   stopTimer();
-  const available = missions.filter((mission) => mission.modes?.includes(setup.mode) && !session.recentMissionIds.includes(mission.id));
-  const candidates = available.length ? available : missions.filter((mission) => mission.modes?.includes(setup.mode));
-  session.mission = candidates[Math.floor(Math.random() * candidates.length)] || missions[0];
-  session.recentMissionIds = [...session.recentMissionIds.slice(-3), session.mission?.id].filter(Boolean);
+  cancelDelayedCallbacks();
+  session.turnId = makeIdentity("turn");
+  session.mission = null;
   session.phase = "roll";
   session.target = null;
   session.targetChoices = [];
   session.roll = null;
   session.reveals = new Set();
   session.swapMode = false;
-  session.secondChance = false;
+  session.pendingSwapId = null;
+  session.targetChangeUsed = false;
+  session.supportedRetryUsed = false;
+  session.attemptStarted = false;
+  session.helpedThisTurn = false;
   session.bonusWord = null;
-  session.timer = { duration: settings.timers[setup.mode], remaining: settings.timers[setup.mode], running: false };
+  const duration = turnDuration();
+  session.timer = { duration, remaining: duration, running: false, deadline: null };
+  turnTimer.attach(session.timer);
+  persistSession();
   renderGame();
 }
 
 function renderGame() {
   const player = session.players[session.currentIndex];
-  const level = levelMeta[setup.level] || { className: "easy", label: "CUSTOM" };
-  applyTheme(setup.level);
+  const config = session.config;
+  const level = levelMeta[config.level] || { className: "easy", label: "CUSTOM" };
+  applyTheme(config.level);
   app.innerHTML = `<section class="game-view ${level.className}">
-    <header class="turn-banner"><div><span>NOW SPEAKING</span><strong>${h(player.name)}</strong><b class="current-score">${player.score} point${player.score === 1 ? "" : "s"}</b></div><div class="turn-meta"><span>${h(level.label)}</span><b>${h(modeMeta[setup.mode].label)}</b></div></header>
+    <header class="turn-banner"><div><span>NOW SPEAKING</span><strong>${h(player.name)}</strong><b class="current-score">${player.score} point${player.score === 1 ? "" : "s"}</b></div><div class="turn-meta"><span>${h(level.label)}</span><b>${h(modeMeta[config.mode].label)}</b></div></header>
     <div class="game-layout">
-      <div class="play-column">${renderMission()}${renderTargetPanel()}${session.phase === "speak" ? renderTimerAndJudge() : ""}</div>
+      <div class="play-column">${renderMission()}${renderTargetPanel()}${["speak", "judging"].includes(session.phase) ? renderTimerAndJudge() : ""}</div>
       <aside class="game-sidebar">${renderScoreboard()}${renderTactics(player)}${renderWordBank()}<div class="teacher-controls"><button type="button" data-action="skip-player">Skip player</button><button type="button" data-action="undo-score" ${session.history.length ? "" : "disabled"}>Undo last score</button><button type="button" data-action="manual-end">End game</button></div></aside>
     </div>
   </section>`;
@@ -390,8 +500,9 @@ function renderGame() {
 
 function renderMission() {
   const mission = session.mission;
+  if (!mission) return `<article class="mission-card paper-panel"><header><span class="card-kicker">MISSION CARD</span><em>DEALT AFTER THE WORD</em></header><div class="mission-copy"><h2>Target first</h2><p>The speaking mission will be matched to the word after the D20 roll.</p></div></article>`;
   const art = missionArtKey(mission);
-  return `<article class="mission-card paper-panel mission-${art}" data-mission-art="${art}"><header><span class="card-kicker">MISSION CARD</span><em>${h(mission?.category || "SPEAK")}</em></header><div class="mission-copy"><h2>${h(mission?.title || "Use the word")}</h2><p>${h(mission?.prompt || "Use the target word naturally in spoken English.")}</p>${setup.mode === "supported" && mission?.starters?.length ? `<div class="starters"><span>Try starting with</span>${mission.starters.map((starter) => `<q>${h(starter)}</q>`).join("")}</div>` : ""}</div></article>`;
+  return `<article class="mission-card paper-panel mission-${art}" data-mission-art="${art}"><header><span class="card-kicker">MISSION CARD</span><em>${h(mission?.category || "SPEAK")}</em></header><div class="mission-copy"><h2>${h(mission?.title || "Use the word")}</h2><p>${h(mission?.prompt || "Use the target word naturally in spoken English.")}</p>${session.config.mode === "supported" && mission?.starters?.length ? `<div class="starters"><span>Try starting with</span>${mission.starters.map((starter) => `<q>${h(starter)}</q>`).join("")}</div>` : ""}${mission?.stretch?.optional && session.bonusWord ? `<p class="optional-stretch"><strong>Optional stretch:</strong> ${h(mission.stretch.prompt)}</p>` : ""}</div></article>`;
 }
 
 function missionArtKey(mission) {
@@ -407,15 +518,20 @@ function missionArtKey(mission) {
 }
 
 function renderTargetPanel() {
+  const config = session.config;
   if (session.phase === "roll") return `<section class="target-stage paper-panel"><p class="eyebrow">TARGET WORD</p><div class="roll-stage"><button class="d20-button" type="button" data-action="roll-d20" aria-label="Roll the twenty-sided die"><span aria-hidden="true">20</span></button><div><h2>Roll for the word</h2><p>The D20 selects from ${session.pool.length.toLocaleString()} eligible words.</p><button class="primary-button" type="button" data-action="roll-d20">Roll D20</button></div></div></section>`;
   if (session.phase === "rolling") return `<section class="target-stage paper-panel" aria-busy="true"><p class="eyebrow">THE D20 IS ROLLING</p><div class="rolling-die" aria-label="Rolling">${Math.floor(Math.random() * 20) + 1}</div></section>`;
-  if (session.phase === "booklet") return `<section class="target-stage paper-panel booklet-stage"><p class="eyebrow">USE EIKEN BOOKLET</p><div class="roll-result"><span>ROLL</span><strong>${session.roll}</strong></div><h2>Find word ${session.target.position} in your EIKEN booklet</h2><p>${session.target.position === session.roll ? "The D20 maps directly to this word." : `This larger deck uses D20 lane ${session.roll} to select booklet word ${session.target.position}.`} Give the student a moment to locate it.</p><button class="primary-button" type="button" data-action="reveal-word">Reveal word / continue</button></section>`;
+  if (session.phase === "booklet") return `<section class="target-stage paper-panel booklet-stage"><p class="eyebrow">USE EIKEN BOOKLET</p><div class="roll-result"><span>ROLL</span><strong>${session.roll}</strong></div><h2>${h(session.target.level)} · ${h(session.target.month)} · Week ${session.target.week} · Entry ${session.target.position}</h2><p>${session.literalD20 ? "This single 20-entry list maps literally to the D20." : "For this larger or mixed pool, the D20 keeps its physical game identity while the shuffled bag guarantees fair coverage."} Give the student a moment to locate the entry.</p><button class="primary-button" type="button" data-action="reveal-word">Reveal word / continue</button></section>`;
   if (session.phase === "choose") return `<section class="target-stage paper-panel"><p class="eyebrow">CHOOSE ONE TARGET</p><h2>Which word can you use best?</h2><div class="target-choices">${session.targetChoices.map((word) => `<button type="button" data-action="choose-target" data-word-id="${h(word.id)}"><strong>${h(word.word)}</strong><span>(${h(shortPos(word.partOfSpeech))})</span></button>`).join("")}</div></section>`;
   const word = session.target;
-  return `<section class="target-stage paper-panel target-reveal"><header><div><p class="eyebrow">TARGET WORD · D20 ${session.roll}</p><h2>${h(word.word)}</h2><span class="part-of-speech">(${h(shortPos(word.partOfSpeech))})</span></div>${setup.mode === "challenge" && session.bonusWord ? `<div class="bonus-word"><span>EXCELLENT BONUS</span><strong>+ ${h(session.bonusWord.word)}</strong><small>Use both words naturally</small></div>` : ""}</header>
-    <div class="help-buttons">${helpButton("japanese", "日本語", settings.showJapanese, "japanese-help")}${helpButton("definition", "MEANING", settings.allowDefinition, "definition-help")}${helpButton("example", "EXAMPLE", settings.allowExample, "example-help")}</div>
+  const wordLength = String(word.word).length;
+  const wordSizeClass = wordLength > 20 ? "very-long-word" : wordLength > 14 ? "long-word" : "";
+  return `<section class="target-stage paper-panel target-reveal"><header><div><p class="eyebrow">TARGET WORD · D20 ${session.roll}</p><h2 class="${wordSizeClass}" data-word-length="${wordLength}">${h(word.word)}</h2><span class="part-of-speech">(${h(shortPos(word.partOfSpeech))})</span></div></header>
+    ${config.mode === "challenge" && session.bonusWord ? `<div class="bonus-word"><span>OPTIONAL TWO-WORD STRETCH</span><strong>+ ${h(session.bonusWord.word)}</strong><small>Use both only if they fit naturally</small></div>` : ""}
+    <p class="help-instruction">After the first attempt, the teacher may reveal any permitted help. Help never costs points. <button class="text-button" type="button" data-action="mark-attempt" ${session.attemptStarted ? "disabled" : ""}>${session.attemptStarted ? "Initial attempt recorded" : "Record initial attempt"}</button></p>
+    <div class="help-buttons">${helpButton("japanese", "日本語", session.settings.showJapanese)}${helpButton("definition", "MEANING", session.settings.allowDefinition)}${helpButton("example", "EXAMPLE", session.settings.allowExample)}</div>
     <div class="help-reveals">${revealedHelp("japanese", word.japanese, "Japanese meaning not provided.", word.japaneseExplanation)}${revealedHelp("definition", word.englishDefinition, "English definition not provided.")}${revealedHelp("example", word.example, "Example sentence not provided.")}</div>
-    ${session.swapMode ? `<p class="swap-callout">Choose a highlighted card in the Word Bank.</p>` : ""}</section>`;
+    ${session.swapMode ? `<p class="swap-callout">Choose a highlighted Word Bank card, or <button type="button" data-action="cancel-swap">cancel safely</button>.</p>` : ""}</section>`;
 }
 
 function shortPos(pos) {
@@ -424,14 +540,10 @@ function shortPos(pos) {
   return map[clean] || clean.split(";").map((part) => map[part.trim()] || part.trim()).join(" / ");
 }
 
-function helpButton(type, label, allowed, tacticId) {
+function helpButton(type, label, allowed) {
   if (!allowed) return "";
   const revealed = session.reveals.has(type);
-  const player = session.players[session.currentIndex];
-  const direct = setup.mode === "supported" || !settings.tacticCards;
-  const hasTactic = player.tactics.some((card) => card.id === tacticId);
-  const disabled = !revealed && !direct && !hasTactic;
-  return `<button type="button" data-action="reveal-help" data-help="${type}" data-tactic="${tacticId}" aria-pressed="${revealed}" ${disabled ? "disabled title=\"A matching Tactic Card is needed\"" : ""}><span>${revealed ? "✓" : "+"}</span>${label}${!direct && !revealed ? `<small>${hasTactic ? "USE TACTIC" : "TACTIC NEEDED"}</small>` : ""}</button>`;
+  return `<button type="button" data-action="reveal-help" data-help="${type}" aria-pressed="${revealed}"><span>${revealed ? "✓" : "+"}</span>${label}${!revealed ? `<small>AFTER ATTEMPT</small>` : ""}</button>`;
 }
 
 function revealedHelp(type, value, fallback, detail = "") {
@@ -440,40 +552,52 @@ function revealedHelp(type, value, fallback, detail = "") {
 }
 
 function renderTimerAndJudge() {
-  return `<section class="turn-controls paper-panel"><div class="timer-block"><span class="timer-label">TURN TIMER</span><strong id="timer-display">${formatTime(session.timer.remaining)}</strong><div class="timer-buttons"><button type="button" data-action="timer-toggle">Start</button><button type="button" data-action="timer-reset">Reset</button></div></div><div class="judge-block"><span>TEACHER JUDGEMENT</span><div><button class="judge try" type="button" data-action="judge" data-result="try">Try again <b>0</b></button><button class="judge success" type="button" data-action="judge" data-result="success">Success <b>+1</b></button><button class="judge excellent" type="button" data-action="judge" data-result="excellent">Excellent <b>+2</b></button></div></div></section>`;
+  const locked = session.phase === "judging";
+  return `<section class="turn-controls paper-panel"><div class="timer-block"><span class="timer-label">TURN TIMER</span><strong id="timer-display">${formatTime(session.timer.remaining)}</strong><div class="timer-buttons"><button type="button" data-action="timer-toggle" ${locked ? "disabled" : ""}>${session.timer.running ? "Pause" : "Start"}</button><button type="button" data-action="timer-reset" ${locked ? "disabled" : ""}>Reset</button></div></div><div class="judge-block"><span>TEACHER JUDGEMENT · one outcome</span><div><button class="judge try" type="button" data-action="judge" data-result="pass" ${locked ? "disabled" : ""}>Pass and next <b>0</b></button><button class="judge success" type="button" data-action="judge" data-result="success" ${locked ? "disabled" : ""}>Natural use + mission <b>+1</b></button><button class="judge excellent" type="button" data-action="judge" data-result="excellent" ${locked ? "disabled" : ""}>Detail, reason, or follow-up <b>+2</b></button></div>${session.attemptStarted && !session.supportedRetryUsed ? `<button class="supported-retry" type="button" data-action="supported-retry" ${locked ? "disabled" : ""}>Unscored supported retry · same word</button>` : ""}</div></section>`;
 }
 
 function renderScoreboard() {
-  return `<section class="scoreboard paper-panel"><header><span>PLAYER SCORE</span><small>${setup.endType === "manual" ? "Manual finish" : `${setup.endType === "points" ? "First to" : "Rounds"} ${setup.endTarget}`}</small></header><ol>${session.players.map((player, index) => `<li class="${index === session.currentIndex ? "current" : ""}" ${index === session.currentIndex ? 'aria-current="true"' : ""}><span>${h(player.name)}</span><small>${index === session.currentIndex ? "NOW SPEAKING · " : ""}${player.turns} turn${player.turns === 1 ? "" : "s"}</small><strong>${player.score}</strong></li>`).join("")}</ol></section>`;
+  const config = session.config;
+  return `<section class="scoreboard paper-panel"><header><span>PLAYER SCORE</span><small>${config.endType === "manual" ? "Manual finish" : `${config.endType === "points" ? "First to" : "Rounds"} ${config.endTarget}`}</small></header><ol>${session.players.map((player, index) => `<li class="${index === session.currentIndex ? "current" : ""}" ${index === session.currentIndex ? 'aria-current="true"' : ""}><span>${h(player.name)}</span><small>${index === session.currentIndex ? "NOW SPEAKING · " : ""}${player.turns} turn${player.turns === 1 ? "" : "s"}</small><strong>${player.score}</strong></li>`).join("")}</ol></section>`;
 }
 
 function renderTactics(player) {
-  if (!settings.tacticCards) return "";
+  if (!session.settings.tacticCards) return "";
   return `<section class="tactics-panel paper-panel"><header><span>TACTIC HAND</span><small>${player.tactics.length} left</small></header><div class="tactic-list">${player.tactics.length ? player.tactics.map((card) => `<button type="button" data-action="use-tactic" data-instance-id="${h(card.instanceId)}" data-tactic-id="${h(card.id)}"><b>${h(card.icon)}</b><span><strong>${h(card.name)}</strong><small>${h(card.description)}</small></span></button>`).join("") : `<p class="empty-hand">No Tactics left.</p>`}</div></section>`;
 }
 
 function renderWordBank() {
-  return `<section class="word-bank paper-panel ${session.swapMode ? "swap-active" : ""}"><header><span>WORD BANK</span><small>${session.swapMode ? "Choose a card" : "Face-up words"}</small></header><div>${session.bank.map((word, index) => `<button type="button" data-action="bank-word" data-bank-index="${index}" ${session.swapMode ? "" : "disabled"}><span class="bank-number">${index + 1}</span><strong>${h(word.word)}</strong><small>${h(shortPos(word.partOfSpeech))}</small></button>`).join("")}</div></section>`;
+  return `<section class="word-bank paper-panel ${session.swapMode ? "swap-active" : ""}"><header><span>WORD BANK</span><small>${session.swapMode ? "Choose a card" : `${session.bank.length} available`}</small></header><div>${session.bank.length ? session.bank.map((word, index) => `<button type="button" data-action="bank-word" data-bank-index="${index}" ${session.swapMode ? "" : "disabled"}><span class="bank-number">${index + 1}</span><strong>${h(word.word)}</strong><small>${h(shortPos(word.partOfSpeech))}</small></button>`).join("") : `<p class="empty-hand">No different words are available in this tiny pool.</p>`}</div></section>`;
 }
 
 function rollD20() {
   if (session.phase !== "roll") return;
+  stopTimer();
   session.phase = "rolling";
   renderGame();
   const delay = matchMedia("(prefers-reduced-motion: reduce)").matches ? 80 : 720;
-  setTimeout(() => {
+  scheduleForCurrentTurn(() => {
     session.roll = Math.floor(Math.random() * 20) + 1;
-    const first = selectByD20(session.pool, session.roll, session.recentWordIds);
+    let first = null;
+    if (session.literalD20) first = selectByD20(session.pool, session.roll);
+    else if (session.completedTurns > 0 && session.completedTurns % 4 === 0) first = takeEligibleReview(session);
+    if (!first) {
+      const draw = drawFromShuffledBag(session.pool, session.bagState);
+      first = draw.word;
+      session.bagState = draw.state;
+    }
+    if (!first) return toast("No target word is available.", "warning");
     session.target = first;
-    session.targetChoices = setup.mode === "supported" ? [first, ...pickDistinct(session.pool, 2, [first.id, ...session.recentWordIds])].sort(() => Math.random() - 0.5) : [];
-    session.phase = setup.booklet ? "booklet" : setup.mode === "supported" ? "choose" : "speak";
+    session.targetChoices = session.config.mode === "supported" ? [first, ...pickDistinct(session.pool, 2, [first.id, ...session.recentWordIds])].sort(() => Math.random() - 0.5) : [];
+    session.phase = session.config.booklet ? "booklet" : session.config.mode === "supported" && session.targetChoices.length > 1 ? "choose" : "speak";
     if (session.phase === "speak") activateTarget(first);
+    persistSession();
     renderGame();
   }, delay);
 }
 
 function revealBookletWord() {
-  session.phase = setup.mode === "supported" ? "choose" : "speak";
+  session.phase = session.config.mode === "supported" && session.targetChoices.length > 1 ? "choose" : "speak";
   if (session.phase === "speak") activateTarget(session.target);
   renderGame();
 }
@@ -487,6 +611,7 @@ function chooseTarget(id) {
 }
 
 function activateTarget(word) {
+  stopTimer();
   session.target = word;
   const duplicateBankIndex = session.bank.findIndex((item) => item.id === word.id);
   if (duplicateBankIndex >= 0) {
@@ -496,14 +621,31 @@ function activateTarget(word) {
   session.reveals = new Set();
   session.recentWordIds = [...session.recentWordIds.slice(-7), word.id];
   session.encountered.set(word.id, word);
-  session.bonusWord = setup.mode === "challenge" ? session.bank.find((item) => item.id !== word.id) || null : null;
-  session.timer = { duration: settings.timers[setup.mode], remaining: settings.timers[setup.mode], running: false };
+  session.mission = chooseMission(missions, word, { mode: session.config.mode, level: session.config.level, recentIds: session.recentMissionIds });
+  session.recentMissionIds = [...session.recentMissionIds.slice(-3), session.mission?.id].filter(Boolean);
+  session.bonusWord = session.config.mode === "challenge" ? session.bank.find((item) => item.id !== word.id) || null : null;
+  const duration = turnDuration();
+  session.timer = { duration, remaining: duration, running: false, deadline: null };
+  turnTimer.attach(session.timer);
+  persistSession();
 }
 
-function revealHelp(type, tacticId) {
+function markAttempt() {
+  if (session?.phase !== "speak") return;
+  session.attemptStarted = true;
+  persistSession();
+  renderGame();
+  toast("Initial attempt recorded. Teacher-controlled help is now available.", "success");
+}
+
+function revealHelp(type) {
   if (session.phase !== "speak" || session.reveals.has(type)) return;
-  if (setup.mode !== "supported" && settings.tacticCards && !consumeTactic(tacticId, false)) return toast("That help needs the matching Tactic Card.", "warning");
+  if (!session.attemptStarted) return toast("Record the student's first attempt before revealing help.", "warning");
+  stopTimer();
   session.reveals.add(type);
+  session.helpedThisTurn = true;
+  queueForLaterReview(session, session.target, `help:${type}`);
+  persistSession();
   renderGame();
 }
 
@@ -521,55 +663,69 @@ function useTactic(instanceId) {
   const player = session.players[session.currentIndex];
   const card = player.tactics.find((item) => item.instanceId === instanceId);
   if (!card) return;
-  if (card.id === "word-swap") { consumeTactic(instanceId, false); session.swapMode = true; toast("Choose a Word Bank card."); }
-  else if (card.id === "teacher-hint") { consumeTactic(instanceId, false); toast("Teacher: give a clue, but do not say the answer.", "success"); }
-  else if (card.id === "japanese-help") { if (!settings.showJapanese) return toast("Japanese help is off in Teacher Settings.", "warning"); consumeTactic(instanceId, false); session.reveals.add("japanese"); }
-  else if (card.id === "example-help") { if (!settings.allowExample) return toast("Example help is off in Teacher Settings.", "warning"); consumeTactic(instanceId, false); session.reveals.add("example"); }
-  else if (card.id === "definition-help") { if (!settings.allowDefinition) return toast("Definition help is off in Teacher Settings.", "warning"); consumeTactic(instanceId, false); session.reveals.add("definition"); }
-  else if (card.id === "reroll") { consumeTactic(instanceId, false); session.phase = "roll"; session.target = null; session.targetChoices = []; session.reveals = new Set(); }
-  else if (card.id === "extra-time") { consumeTactic(instanceId, false); session.timer.remaining += 15; session.timer.duration += 15; toast("15 seconds added.", "success"); }
-  else if (card.id === "second-chance") { consumeTactic(instanceId, false); session.secondChance = true; toast("Second Chance is ready for this response.", "success"); }
+  if (!session.attemptStarted) return toast("Use target-changing resources only after the first attempt.", "warning");
+  if (card.id === "word-swap") {
+    if (session.targetChangeUsed) return toast("Only one target change is allowed this turn.", "warning");
+    if (!session.bank.length) return toast("No different Word Bank target is available. The swap was not spent.", "warning");
+    stopTimer(); session.swapMode = true; session.pendingSwapId = instanceId; toast("Choose a Word Bank card, or cancel.");
+  }
+  else if (card.id === "reroll") {
+    if (session.targetChangeUsed) return toast("Only one target change is allowed this turn.", "warning");
+    stopTimer();
+    queueForLaterReview(session, session.target, "reroll");
+    consumeTactic(instanceId, false);
+    session.targetChangeUsed = true;
+    session.phase = "roll"; session.target = null; session.targetChoices = []; session.reveals = new Set(); session.mission = null;
+  }
+  else if (card.id === "extra-time") { stopTimer(); consumeTactic(instanceId, false); turnTimer.add(30); toast("30 seconds added. Timer remains paused.", "success"); }
+  persistSession();
   renderGame();
 }
 
 function swapWithBank(index) {
   if (!session.swapMode || !session.bank[index]) return;
+  stopTimer();
   const chosen = session.bank[index];
+  const spent = session.pendingSwapId;
+  if (!spent || !consumeTactic(spent, false)) return cancelSwap();
+  queueForLaterReview(session, session.target, "swap");
   const replacement = pickDistinct(session.pool, 1, [...session.bank.map((item) => item.id), chosen.id, session.target?.id, ...session.recentWordIds])[0];
   if (replacement) session.bank.splice(index, 1, replacement); else session.bank.splice(index, 1);
   session.swapMode = false;
+  session.pendingSwapId = null;
+  session.targetChangeUsed = true;
   activateTarget(chosen);
   refillBank();
+  persistSession();
   renderGame();
   toast(`${chosen.word} is now the target.`, "success");
 }
 
+function cancelSwap() {
+  stopTimer();
+  session.swapMode = false;
+  session.pendingSwapId = null;
+  persistSession();
+  renderGame();
+  toast("Word Swap cancelled. The resource was not spent.");
+}
+
 function toggleTimer() {
   if (session.phase !== "speak") return;
-  if (session.timer.running) stopTimer(); else {
-    session.timer.running = true;
-    timerInterval = setInterval(() => {
-      session.timer.remaining = Math.max(0, session.timer.remaining - 1);
-      if (session.timer.remaining <= 5 && session.timer.remaining > 0) playTick();
-      if (session.timer.remaining === 0) stopTimer();
-      updateTimerDisplay();
-    }, 1000);
-    updateTimerDisplay();
-  }
+  session.attemptStarted = true;
+  if (session.timer.running) stopTimer(); else turnTimer.start(session.timer);
+  persistSession();
 }
 
 function stopTimer() {
-  clearInterval(timerInterval);
-  timerInterval = null;
-  if (session?.timer) session.timer.running = false;
-  updateTimerDisplay();
+  turnTimer.pause();
 }
 
 function resetTimer() {
   stopTimer();
-  session.timer.remaining = settings.timers[setup.mode];
-  session.timer.duration = settings.timers[setup.mode];
-  updateTimerDisplay();
+  turnTimer.attach(session.timer);
+  turnTimer.reset(turnDuration());
+  persistSession();
 }
 
 function updateTimerDisplay() {
@@ -584,87 +740,129 @@ function updateTimerDisplay() {
 function formatTime(seconds) { return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; }
 
 function playTick() {
-  if (!settings.sound) return;
+  if (!session?.settings?.sound || !audioContext) return;
   try {
-    const context = new AudioContext();
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
     oscillator.frequency.value = session.timer.remaining === 1 ? 720 : 520;
     gain.gain.value = 0.025;
-    oscillator.connect(gain).connect(context.destination);
-    oscillator.start(); oscillator.stop(context.currentTime + 0.07);
+    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.start(); oscillator.stop(audioContext.currentTime + 0.07);
   } catch { /* Sound is optional. */ }
 }
 
 function judge(result) {
   if (session.phase !== "speak" || !session.target) return;
+  const turnId = session.turnId;
+  const before = captureTurnState(session);
+  if (!claimTurnOutcome(session, turnId)) return;
   stopTimer();
   const player = session.players[session.currentIndex];
   const points = result === "excellent" ? 2 : result === "success" ? 1 : 0;
-  if (result === "try" && session.secondChance) {
-    session.secondChance = false;
-    session.difficulties.set(session.target.id, (session.difficulties.get(session.target.id) || 0) + 1);
-    toast("Second Chance: keep the same word and try once more.", "success");
-    renderGame();
-    return;
-  }
-  session.history.push({ playerIndex: session.currentIndex, points, result, target: session.target, mission: session.mission, roll: session.roll });
+  session.history.push({ turnId, snapshot: before, result, points });
   player.score += points;
   player.turns += 1;
-  if (result !== "try") {
+  session.completedTurns += 1;
+  if (result !== "pass") {
     player.successful += 1;
     player.words.push(session.target.word);
     if (result === "excellent") player.excellent += 1;
-  } else session.difficulties.set(session.target.id, (session.difficulties.get(session.target.id) || 0) + 1);
+  } else {
+    session.difficulties.set(session.target.id, (session.difficulties.get(session.target.id) || 0) + 1);
+    queueForLaterReview(session, session.target, "pass");
+  }
+  persistSession();
   if (shouldEndGame()) return finishGame();
   session.currentIndex = (session.currentIndex + 1) % session.players.length;
-  toast(result === "excellent" ? "+2 — excellent use!" : result === "success" ? "+1 — success!" : "No point this time. Keep the word for review.", result === "try" ? "info" : "success");
-  setTimeout(startTurn, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 300);
+  toast(result === "excellent" ? "+2 — detail, reason, or follow-up included." : result === "success" ? "+1 — natural target use and mission complete." : "Passed. This word is queued for later review.", result === "pass" ? "info" : "success");
+  scheduleForCurrentTurn(startTurn, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 300);
 }
 
 function shouldEndGame() {
-  if (setup.endType === "manual") return false;
-  if (setup.endType === "points") return session.players.some((player) => player.score >= setup.endTarget);
-  return session.players.every((player) => player.turns >= setup.endTarget);
+  const config = session.config;
+  if (config.endType === "manual") return false;
+  if (config.endType === "points") return session.players.some((player) => player.score >= config.endTarget);
+  return session.players.every((player) => player.turns >= config.endTarget);
 }
 
 function skipPlayer() {
   stopTimer();
+  cancelDelayedCallbacks();
   session.currentIndex = (session.currentIndex + 1) % session.players.length;
   startTurn();
   toast("Player skipped.");
 }
 
-function undoScore() {
-  const action = session.history.pop();
-  if (!action) return;
-  const player = session.players[action.playerIndex];
-  player.score = Math.max(0, player.score - action.points);
-  player.turns = Math.max(0, player.turns - 1);
-  if (action.result !== "try") {
-    player.successful = Math.max(0, player.successful - 1);
-    if (action.result === "excellent") player.excellent = Math.max(0, player.excellent - 1);
-    player.words.pop();
-  }
-  session.currentIndex = action.playerIndex;
-  session.target = action.target;
-  session.mission = action.mission;
-  session.roll = action.roll;
-  session.phase = "speak";
-  session.reveals = new Set();
-  session.timer = { duration: settings.timers[setup.mode], remaining: settings.timers[setup.mode], running: false };
+function supportedRetry() {
+  if (session?.phase !== "speak" || !session.target || !session.attemptStarted || session.supportedRetryUsed) return;
+  stopTimer();
+  cancelDelayedCallbacks();
+  session.supportedRetryUsed = true;
+  session.helpedThisTurn = true;
+  queueForLaterReview(session, session.target, "supported-retry");
+  const duration = turnDuration();
+  session.timer = { duration, remaining: duration, running: false, deadline: null };
+  turnTimer.attach(session.timer);
+  persistSession();
   renderGame();
-  toast("Last score undone.", "success");
+  toast("Supported retry ready. Same player and target; this retry is unscored.", "success");
+}
+
+function undoScore() {
+  stopTimer();
+  cancelDelayedCallbacks();
+  const action = session?.history?.pop();
+  if (!action) return;
+  restoreTurnState(session, action.snapshot);
+  session.id = session.id || makeIdentity("session");
+  turnTimer.attach(session.timer);
+  persistSession();
+  renderGame();
+  toast("Last outcome fully undone. Timer restored and paused.", "success");
 }
 
 function finishGame() {
   stopTimer();
+  cancelDelayedCallbacks();
   session.ended = true;
-  renderResults();
+  clearSavedSession();
+  activateWaitingUpdate();
+  const queuedIds = session.reviewQueue.filter((item) => !item.reviewed).map((item) => item.wordId);
+  const difficultIds = [...session.difficulties.keys()];
+  const candidateIds = [...new Set([...queuedIds, ...difficultIds])];
+  const candidates = candidateIds.map((id) => session.encountered.get(id) || session.pool.find((word) => word.id === id)).filter(Boolean);
+  const fallback = [...session.encountered.values()].filter((word) => !candidateIds.includes(word.id));
+  const words = [...candidates, ...fallback].slice(0, 3);
+  session.recall = { words, index: 0, revealed: false, remembered: 0 };
+  if (words.length) renderRecall(); else renderResults();
+}
+
+function renderRecall() {
+  const recall = session.recall;
+  const word = recall?.words?.[recall.index];
+  if (!word) return renderResults();
+  applyTheme(session.config.level);
+  const clue = word.japanese || word.englishDefinition || word.example || "Recall one word from this lesson.";
+  app.innerHTML = `<section class="recall-view"><header class="setup-header"><p class="eyebrow">UNSCORED FINAL RECALL · ${recall.index + 1}/${recall.words.length}</p><h1>One more retrieval</h1><p class="lead">Recall the English target before showing the answer.</p></header><article class="paper-panel recall-card"><span>CLUE</span><p lang="${word.japanese ? "ja" : "en"}">${h(clue)}</p>${recall.revealed ? `<h2>${h(word.word)}</h2><small>(${h(shortPos(word.partOfSpeech))})</small><div class="button-row"><button class="primary-button" type="button" data-action="recall-next" data-remembered="true">I remembered it</button><button class="secondary-button" type="button" data-action="recall-next" data-remembered="false">Keep for review</button></div>` : `<button class="primary-button" type="button" data-action="recall-reveal">Reveal answer</button>`}</article><div class="result-actions"><button class="secondary-button" type="button" data-action="undo-score" ${session.history.length ? "" : "disabled"}>Undo final score</button><button class="text-button" type="button" data-action="skip-recall">Skip recall</button></div></section>`;
+  focusMain();
+}
+
+function revealRecall() {
+  if (!session.recall) return;
+  session.recall.revealed = true;
+  renderRecall();
+}
+
+function nextRecall(button) {
+  if (!session.recall) return;
+  if (button.dataset.remembered === "true") session.recall.remembered += 1;
+  session.recall.index += 1;
+  session.recall.revealed = false;
+  renderRecall();
 }
 
 function renderResults() {
-  applyTheme(setup.level);
+  applyTheme(session.config.level);
   const maxScore = Math.max(...session.players.map((player) => player.score));
   const winners = session.players.filter((player) => player.score === maxScore);
   const scores = [...session.players].sort((a, b) => b.score - a.score).map((player, index) => `<li><span>${index + 1}</span><div><strong>${h(player.name)}</strong><small>${player.successful} successful · ${player.excellent} excellent · ${player.turns} turns</small></div><b>${player.score}</b></li>`).join("");
@@ -675,14 +873,14 @@ function renderResults() {
   const unused = session.pool.filter((word) => !session.encountered.has(word.id)).length;
   app.innerHTML = `<section class="results-view">
     <div class="winner-panel"><span class="result-crest" aria-hidden="true">勝</span><p class="eyebrow">FINAL RESULT</p><h1>${winners.length > 1 ? "It’s a tie!" : `${h(winners[0].name)} wins!`}</h1><p>${winners.map((player) => h(player.name)).join(" & ")} finished with <strong>${maxScore} point${maxScore === 1 ? "" : "s"}</strong>.</p></div>
-    <div class="results-grid"><section class="paper-panel final-scores"><h2>Final scores</h2><ol>${scores}</ol></section><section class="paper-panel session-stats"><h2>Session notes</h2><dl><div><dt>Words encountered</dt><dd>${session.encountered.size}</dd></div><div><dt>Successful attempts</dt><dd>${session.players.reduce((sum, player) => sum + player.successful, 0)}</dd></div><div><dt>Excellent responses</dt><dd>${session.players.reduce((sum, player) => sum + player.excellent, 0)}</dd></div><div><dt>Most-used word</dt><dd>${h(mostUsed?.[0] || "—")}</dd></div><div><dt>Unused in this set</dt><dd>${unused}</dd></div></dl>${difficult.length ? `<p><strong>Worth reviewing:</strong> ${difficult.map(h).join(", ")}</p>` : ""}</section></div>
-    <div class="result-actions"><button class="primary-button" type="button" data-action="review-words">Quick word review</button><button class="secondary-button" type="button" data-action="play-again">Play again · same set</button><button class="secondary-button" type="button" data-action="change-set">Change word set</button><button class="text-button" type="button" data-action="home">Home</button></div>
+    <div class="results-grid"><section class="paper-panel final-scores"><h2>Final scores</h2><ol>${scores}</ol></section><section class="paper-panel session-stats"><h2>Session notes</h2><dl><div><dt>Words encountered</dt><dd>${session.encountered.size}</dd></div><div><dt>Successful attempts</dt><dd>${session.players.reduce((sum, player) => sum + player.successful, 0)}</dd></div><div><dt>Excellent responses</dt><dd>${session.players.reduce((sum, player) => sum + player.excellent, 0)}</dd></div><div><dt>Final recall</dt><dd>${session.recall ? `${session.recall.remembered}/${session.recall.words.length}` : "—"}</dd></div><div><dt>Most-used word</dt><dd>${h(mostUsed?.[0] || "—")}</dd></div><div><dt>Unused in this set</dt><dd>${unused}</dd></div></dl>${difficult.length ? `<p><strong>Worth reviewing:</strong> ${difficult.map(h).join(", ")}</p>` : ""}</section></div>
+    <div class="result-actions"><button class="primary-button" type="button" data-action="review-words">Quick word review</button><button class="secondary-button" type="button" data-action="undo-score" ${session.history.length ? "" : "disabled"}>Undo final score</button><button class="secondary-button" type="button" data-action="play-again">Play again · same set</button><button class="secondary-button" type="button" data-action="change-set">Change word set</button><button class="text-button" type="button" data-action="home">Home</button></div>
   </section>`;
   focusMain();
 }
 
 function renderReview() {
-  applyTheme(setup.level);
+  applyTheme(session.config.level);
   const words = [...session.encountered.values()];
   app.innerHTML = `<section class="review-view"><header class="setup-titlebar"><button class="back-button" type="button" data-action="results" aria-label="Back to results">←</button><div><p class="eyebrow">QUICK REVIEW</p><h1>Words from this game</h1><p>Open only the support students need.</p></div></header><div class="review-list">${words.length ? words.map((word) => `<article class="paper-panel review-word"><header><div><h2>${h(word.word)}</h2><span>(${h(shortPos(word.partOfSpeech))})</span></div>${session.difficulties.has(word.id) ? `<em>TRY AGAIN</em>` : `<em>ENCOUNTERED</em>`}</header><details><summary>日本語</summary><p lang="ja">${h(word.japanese || "Japanese meaning not provided.")}</p></details><details><summary>Meaning</summary><p>${h(word.englishDefinition || "English definition not provided.")}</p></details><details><summary>Example</summary><p>${h(word.example || "Example sentence not provided.")}</p></details></article>`).join("") : `<p class="paper-panel empty-review">No words were revealed in this game.</p>`}</div><div class="result-actions"><button class="primary-button" type="button" data-action="play-again">Play again</button><button class="secondary-button" type="button" data-action="results">Back to results</button></div></section>`;
   focusMain();
@@ -724,10 +922,17 @@ function deleteCustomSet(id) {
 function handleSetupChange(element) {
   if (element.matches("[data-player-name]")) { setup.playerNames[Number(element.dataset.playerName)] = element.value; return; }
   if (!element.name) return;
+  const previousPlayKind = setup.playKind;
   if (element.name === "booklet") setup.booklet = element.checked;
   else if (element.name === "playerCount" || element.name === "endTarget") setup[element.name] = Number(element.value);
   else setup[element.name] = element.value;
   if (element.name === "playKind") {
+    const oldLabel = previousPlayKind === "teams" ? "Team" : "Player";
+    const newLabel = setup.playKind === "teams" ? "Team" : "Player";
+    setup.playerNames = setup.playerNames.map((name, index) => {
+      const fallback = `${oldLabel} ${String.fromCharCode(65 + index)}`;
+      return !name || name === fallback ? `${newLabel} ${String.fromCharCode(65 + index)}` : name;
+    });
     const max = setup.playKind === "teams" ? 4 : 8;
     setup.playerCount = Math.min(setup.playerCount, max);
   }
@@ -739,7 +944,37 @@ function clampNumber(value, min, max, fallback) {
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
-function focusMain() { requestAnimationFrame(() => { app.focus({ preventScroll: true }); scrollTo({ top: 0, behavior: "instant" }); }); }
+function focusMain() {
+  requestAnimationFrame(() => {
+    const target = app.querySelector("h1, h2, button");
+    if (target && !target.matches("button")) target.setAttribute("tabindex", "-1");
+    target?.focus({ preventScroll: true });
+    scrollTo({ top: 0, behavior: "instant" });
+  });
+}
+
+function resumeSavedSession() {
+  if (session && !session.ended) {
+    setup = structuredClone(session.config);
+  } else if (resumeCandidate) {
+    session = resumeCandidate;
+    resumeCandidate = null;
+    setup = structuredClone(session.config);
+  } else return;
+  session.ended = false;
+  session.timer.running = false;
+  session.timer.deadline = null;
+  turnTimer.attach(session.timer);
+  renderGame();
+  toast("Game resumed with the timer paused.", "success");
+}
+
+function discardResume() {
+  navigationPause({ save: false });
+  clearSavedSession();
+  session = null;
+  renderHome();
+}
 
 const actions = {
   home: renderHome, settings: openSettings, custom: renderCustom,
@@ -748,12 +983,14 @@ const actions = {
   "set-mode": (button) => { setup.mode = button.dataset.mode; renderSetup(); },
   "start-game": startGame, "roll-d20": rollD20, "reveal-word": revealBookletWord,
   "choose-target": (button) => chooseTarget(button.dataset.wordId),
-  "reveal-help": (button) => revealHelp(button.dataset.help, button.dataset.tactic),
+  "mark-attempt": markAttempt, "reveal-help": (button) => revealHelp(button.dataset.help),
   "use-tactic": (button) => useTactic(button.dataset.instanceId),
-  "bank-word": (button) => swapWithBank(Number(button.dataset.bankIndex)),
+  "bank-word": (button) => swapWithBank(Number(button.dataset.bankIndex)), "cancel-swap": cancelSwap,
   "timer-toggle": toggleTimer, "timer-reset": resetTimer,
-  judge: (button) => judge(button.dataset.result), "skip-player": skipPlayer, "undo-score": undoScore,
+  judge: (button) => judge(button.dataset.result), "supported-retry": supportedRetry, "skip-player": skipPlayer, "undo-score": undoScore,
   "manual-end": finishGame, "review-words": renderReview, results: renderResults,
+  "recall-reveal": revealRecall, "recall-next": nextRecall, "skip-recall": renderResults,
+  "resume-session": resumeSavedSession, "discard-resume": discardResume,
   "play-again": () => beginSession(session.pool),
   "change-set": () => setup.level === "Custom" ? renderCustom() : renderSetup(),
   "save-custom": () => playCustomFromForm(true), "play-custom": () => playCustomFromForm(false),
@@ -762,12 +999,23 @@ const actions = {
 };
 
 document.addEventListener("click", (event) => {
+  if (!audioContext && (window.AudioContext || window.webkitAudioContext)) {
+    try { audioContext = new (window.AudioContext || window.webkitAudioContext)(); } catch { /* Sound is optional. */ }
+  } else if (audioContext?.state === "suspended") audioContext.resume().catch(() => {});
   const button = event.target.closest("button[data-action]");
   if (!button || button.disabled) return;
   const action = actions[button.dataset.action];
   if (!action) return;
   event.preventDefault();
   try { action(button); } catch (error) { console.error("Game action failed:", error); toast("That action could not be completed. Please try once more.", "warning"); }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && session?.timer?.running) {
+    stopTimer();
+    persistSession();
+    toast("Timer paused while the page was hidden. Resume it explicitly when ready.");
+  }
 });
 
 document.addEventListener("change", (event) => {
@@ -786,18 +1034,26 @@ document.addEventListener("input", (event) => {
 
 async function init() {
   try {
-    const [vocabResponse, missionResponse, tacticResponse] = await Promise.all([fetch("./data/vocabulary.json"), fetch("./data/missions.json"), fetch("./data/tactics.json")]);
-    if (!vocabResponse.ok) throw new Error(`Vocabulary request failed (${vocabResponse.status}).`);
-    vocabulary = normalizeVocabulary(await vocabResponse.json());
+    const [indexResponse, missionResponse, tacticResponse] = await Promise.all([fetch("./data/runtime/index.json"), fetch("./data/missions.json"), fetch("./data/tactics.json")]);
+    if (!indexResponse.ok) throw new Error(`Vocabulary index request failed (${indexResponse.status}).`);
+    const runtimeIndex = await indexResponse.json();
+    if (!Array.isArray(runtimeIndex.levels) || !runtimeIndex.levels.length) throw new Error("Vocabulary index is invalid.");
+    const levelResponses = await Promise.all(runtimeIndex.levels.map((entry) => fetch(`./data/runtime/${entry.file}`)));
+    if (levelResponses.some((response) => !response.ok)) throw new Error("One or more vocabulary level files could not be loaded.");
+    const levelPayloads = await Promise.all(levelResponses.map((response) => response.json()));
+    vocabulary = levelPayloads.flatMap((payload) => normalizeVocabulary(payload));
     if (!vocabulary.length) throw new Error("Vocabulary data contains no usable words.");
     if (missionResponse.ok) missions = (await missionResponse.json()).missions || [];
     if (tacticResponse.ok) tacticConfig = await tacticResponse.json();
     if (!missions.length) throw new Error("Mission data contains no usable missions.");
+    const saved = safeLoad(STORAGE.resume, null);
+    resumeCandidate = validateResume(saved, APP_VERSION, vocabulary);
+    if (!resumeCandidate && saved) clearSavedSession();
     renderHome();
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch((error) => { console.warn("Service worker:", error); toast("Offline setup did not finish. The online game still works.", "warning"); });
+    registerServiceWorker();
   } catch (error) {
     console.error("EIKEN Word Tactics startup:", error);
-    app.innerHTML = `<section class="loading-card error-card"><span class="crest" aria-hidden="true">!</span><h1>The word deck could not open.</h1><p>Check that <code>data/vocabulary.json</code>, <code>missions.json</code>, and <code>tactics.json</code> are present and valid, then reload this page.</p><button class="primary-button" type="button" onclick="location.reload()">Try again</button></section>`;
+    app.innerHTML = `<section class="loading-card error-card"><span class="crest" aria-hidden="true">!</span><h1>The word deck could not open.</h1><p>The local data files are missing or invalid. Reload when the connection is available; a verified offline copy will continue to work after installation.</p><button class="primary-button" type="button" onclick="location.reload()">Try again</button></section>`;
   }
 }
 

@@ -1,15 +1,10 @@
 {
-  "version": 1,
+  "version": 2,
   "cardsPerPlayer": 2,
+  "guarantee": ["word-swap", "reroll-or-extra-time"],
   "tactics": [
-    {"id":"word-swap","name":"WORD SWAP","description":"Replace this target with one face-up Word Bank card.","quantity":4,"icon":"↔"},
-    {"id":"teacher-hint","name":"TEACHER HINT","description":"The teacher may give a clue without saying the answer.","quantity":3,"icon":"?"},
-    {"id":"japanese-help","name":"JAPANESE HELP","description":"Reveal the Japanese meaning.","quantity":3,"icon":"日"},
-    {"id":"example-help","name":"EXAMPLE HELP","description":"Reveal the natural example sentence.","quantity":2,"icon":"例"},
-    {"id":"definition-help","name":"DEFINITION HELP","description":"Reveal the simple English definition.","quantity":2,"icon":"意"},
-    {"id":"reroll","name":"REROLL","description":"Roll the D20 again and draw another word.","quantity":3,"icon":"20"},
-    {"id":"extra-time","name":"EXTRA TIME","description":"Add 15 seconds to the turn timer.","quantity":2,"icon":"+"},
-    {"id":"second-chance","name":"SECOND CHANCE","description":"Retry this response if the first attempt is unsuccessful.","quantity":2,"icon":"2"}
+    {"id":"word-swap","name":"WORD SWAP","description":"After trying, replace this target with one face-up Word Bank card.","quantity":"one-per-participant","icon":"↔"},
+    {"id":"reroll","name":"REROLL","description":"After trying, roll again and draw another target word.","quantity":"flexible","icon":"20"},
+    {"id":"extra-time","name":"EXTRA TIME","description":"Add 30 seconds to the paused turn timer.","quantity":"flexible","icon":"+"}
   ]
 }
-

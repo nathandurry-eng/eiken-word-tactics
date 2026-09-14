@@ -3,7 +3,8 @@ import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 
 const root = join(process.cwd(), "dist");
-const port = Number(process.env.PORT || 4173);
+const portArgument = process.argv.indexOf("--port");
+const port = Number(portArgument >= 0 ? process.argv[portArgument + 1] : process.env.PORT || 4173);
 const types = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -27,4 +28,3 @@ createServer((request, response) => {
 }).listen(port, "127.0.0.1", () => {
   console.log(`EIKEN Word Tactics preview: http://127.0.0.1:${port}`);
 });
-

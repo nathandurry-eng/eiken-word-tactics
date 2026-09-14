@@ -1,5 +1,5 @@
 export function normalizeVocabulary(payload) {
-  const items = Array.isArray(payload) ? payload : payload?.vocabulary;
+  const items = Array.isArray(payload) ? payload : payload?.vocabulary || payload?.words;
   if (!Array.isArray(items)) throw new Error("Vocabulary data is not a list.");
 
   return items
@@ -8,15 +8,18 @@ export function normalizeVocabulary(payload) {
       id: String(item.id || item.entry_id || `word-${index + 1}`),
       level: String(item.level || "Custom"),
       month: String(item.month || "Custom"),
-      monthOrder: Number(item.month_order) || 99,
+      monthOrder: Number(item.monthOrder ?? item.month_order) || 99,
       week: Number(item.week) || 1,
       position: Number(item.position || item.word_number) || index + 1,
       word: item.word.trim(),
-      partOfSpeech: String(item.part_of_speech || "word"),
+      partOfSpeech: String(item.partOfSpeech || item.part_of_speech || "word"),
       japanese: String(item.japanese || item.japanese_meaning || ""),
-      englishDefinition: String(item.english_definition || ""),
-      japaneseExplanation: String(item.japanese_explanation || ""),
-      example: String(item.example || item.example_sentence || "")
+      englishDefinition: String(item.englishDefinition || item.english_definition || ""),
+      japaneseExplanation: String(item.japaneseExplanation || item.japanese_explanation || ""),
+      example: String(item.example || item.example_sentence || ""),
+      setId: String(item.setId || item.set_id || ""),
+      sourceListSize: Number(item.sourceListSize || item.source_list_size) || 0,
+      quality: item.quality && typeof item.quality === "object" ? item.quality : {}
     }));
 }
 
@@ -39,9 +42,9 @@ export function buildVocabularyPool(vocabulary, config) {
   const levelWords = vocabulary.filter((item) => item.level === config.level);
   if (config.selection === "review") {
     const months = getMonths(vocabulary, config.level);
-    const start = Math.max(0, months.indexOf(config.reviewFrom));
-    const endIndex = months.indexOf(config.reviewTo);
-    const end = endIndex < start ? start : endIndex;
+    const start = months.indexOf(config.reviewFrom);
+    const end = months.indexOf(config.reviewTo);
+    if (start < 0 || end < 0 || end < start) return [];
     const selectedMonths = new Set(months.slice(start, end + 1));
     return levelWords.filter((item) => selectedMonths.has(item.month));
   }
@@ -88,14 +91,36 @@ export function parseCustomWords(input) {
 
 export function selectByD20(pool, roll, recentIds = [], random = Math.random) {
   if (!pool.length) return null;
-  if (pool.length === 20) return pool[roll - 1];
-  if (pool.length < 20) return pool[(roll - 1) % pool.length];
-
+  const normalizedRoll = Math.min(20, Math.max(1, Number(roll) || 1));
+  if (pool.length === 20) return pool[normalizedRoll - 1];
   const recent = new Set(recentIds);
-  const rawLane = pool.filter((item, index) => index % 20 === roll - 1);
-  const freshLane = rawLane.filter((item) => !recent.has(item.id));
-  const usable = freshLane.length ? freshLane : rawLane;
+  const fresh = pool.filter((item) => !recent.has(item.id));
+  const usable = fresh.length ? fresh : pool;
   return usable[Math.floor(random() * usable.length)];
+}
+
+export function createShuffledBag(pool, random = Math.random, previousId = "") {
+  const bag = pool.map((item) => item.id);
+  for (let index = bag.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [bag[index], bag[swapIndex]] = [bag[swapIndex], bag[index]];
+  }
+  if (bag.length > 1 && bag[0] === previousId) [bag[0], bag[1]] = [bag[1], bag[0]];
+  return bag;
+}
+
+export function drawFromShuffledBag(pool, state = {}, random = Math.random) {
+  if (!pool.length) return { word: null, state: { bag: [], lastId: "" } };
+  const byId = new Map(pool.map((item) => [item.id, item]));
+  let bag = Array.isArray(state.bag) ? state.bag.filter((id) => byId.has(id)) : [];
+  if (!bag.length) bag = createShuffledBag(pool, random, state.lastId);
+  const id = bag.shift();
+  return { word: byId.get(id) || null, state: { bag, lastId: id } };
+}
+
+export function validateEndTarget(value) {
+  const target = Number(value);
+  return Number.isInteger(target) && target > 0 && target <= 50 ? target : null;
 }
 
 export function pickDistinct(pool, count, excludedIds = [], random = Math.random) {

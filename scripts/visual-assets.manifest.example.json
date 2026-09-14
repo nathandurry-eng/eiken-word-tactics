@@ -1,0 +1,12 @@
+{
+  "levels": {
+    "easy": {"front":"front easy.png","art_box":[0.0,0.57,1.0,0.98],"thumbnail_box":[0.0,0.57,0.62,0.98],"focus":[0.5,0.72],"max_large":1600},
+    "medium": {"front":"front medium.png","art_box":[0.0,0.59,1.0,0.98],"thumbnail_box":[0.0,0.59,0.62,0.98],"focus":[0.5,0.70],"max_large":2200},
+    "hard": {"front":"front hard.png","art_box":[0.0,0.60,1.0,0.98],"thumbnail_box":[0.0,0.60,0.62,0.98],"focus":[0.5,0.70],"max_large":2200},
+    "challenge": {"front":"challenge front.png","art_box":[0.0,0.57,1.0,0.98],"thumbnail_box":[0.0,0.57,0.62,0.98],"focus":[0.5,0.70],"max_large":1800}
+  },
+  "decor": {"source":"front medium.png","emblem_box":[0.63,0.65,0.91,0.92],"plaque_box":[0.895,0.61,0.985,0.93],"seal_box":[0.905,0.79,0.970,0.925],"paper_box":[0.40,0.02,0.78,0.22]},
+  "tactics": {},
+  "missions": {},
+  "covers": {}
+}

@@ -1,36 +1,35 @@
 # Continuation note
 
-Last updated: 2026-09-13
+Last updated: 2026-09-15
 
 ## Current state
 
-Version 1.1.0 is implemented as a dependency-free static PWA in `dist/`. The supplied master vocabulary export is bundled as `dist/data/vocabulary.json` and currently contains 5,460 usable entries across all five available EIKEN levels.
+Version 1.2.0 is the audit-driven, dependency-free static PWA in `dist/`. The refactor began from commit `3d5dad67b5bd43f8046e60e991567f9575d73b57`. The supplied 5,460-entry source export remains unchanged at `dist/data/vocabulary.json`; the build generates compact per-level runtime files and applies only the six reviewed priority overrides.
 
-The visual redesign from `C:\Users\natha\Downloads\design prompt.txt` is implemented. Easy, Medium, Hard, and Challenge now use distinct supplied artwork and theme palettes; the Mission, Target, Tactic, Word Bank, score, timer, and results surfaces read as one physical card-game system. Thirty-eight optimized WebP derivatives are committed under `dist/assets/` (about 3.7 MB total). Originals were not changed.
+The classroom flow now uses turn IDs and atomic judgement, full-state undo (including after a win), one deadline-derived timer, versioned resume, shuffled-bag selection, later-turn review, and unscored final recall. Help is free after the initial attempt, and every participant gets Word Swap plus Reroll or Extra Time. The mission deck contains 24 reviewed cards with compatibility and safe fallbacks.
 
-Core game paths implemented: level/month/week/mix/review setup, custom sets, all three support modes, D20 selection, booklet reveal, progressive help, Word Bank, all eight Tactics, timer, team/player scoring, skip, undo, points/round/manual ending, results, review, settings, local storage, manifest, and service-worker caching.
+## Architecture
+
+- `dist/app.js`: rendering and classroom flow
+- `dist/session-engine.js`: turn identity, atomic judgement, snapshots, undo, review scheduling, and resume
+- `dist/timer-engine.js`: the single deadline-derived timer
+- `dist/mission-engine.js`: mission compatibility, fallbacks, and level scaling
+- `dist/game-engine.js`: vocabulary normalization, pool construction, literal-D20 rules, and shuffled bags
+- `dist/data/vocabulary-overrides.json`: approved corrections plus the broader editorial queue
+- `scripts/build-runtime-vocabulary.mjs`: compact data generator
+- `scripts/build-visual-assets.py`: manifest-driven, non-destructive WebP pipeline
 
 ## Resume checklist
 
-1. Read `README.md` for architecture and deployment settings.
+1. Read `README.md` for the data, artwork, and deployment details.
 2. Run `npm test` and `npm run build`.
-3. Run `npm start` and test the actual browser flow at `http://127.0.0.1:4173`.
-4. Recheck the full play flow if game logic changes. The v1.1 visual pass was checked at 1920×1080, 1366×768, 1280×800, 1024×768, 768×1024, 430×932, and 390×844 with no horizontal overflow.
-5. The GitHub remote is `https://github.com/nathandurry-eng/eiken-word-tactics.git` on `main`. Cloudflare Pages should use `npm run build` and publish `dist`.
+3. Run `npm start` and test the browser flow at `http://127.0.0.1:4173`.
+4. After layout changes, recheck a six-participant game, expanded help, and a long custom word at 1920×1080, 1366×768, 1280×800, 1024×768, 768×1024, 430×932, and 390×844.
+5. The GitHub remote is `https://github.com/nathandurry-eng/eiken-word-tactics.git` on `main`; Cloudflare Pages runs `npm run build` and publishes `dist`.
 
-## Important files
+## Known follow-up
 
-- `dist/app.js`: UI/game state and all classroom interactions
-- `dist/game-engine.js`: pure parsing/filtering/D20 functions with tests
-- `dist/styles.css`: complete responsive ukiyo-e-inspired design system
-- `dist/assets/`: committed responsive artwork used by the PWA and offline cache
-- `dist/data/vocabulary.json`: authoritative supplied data
-- `dist/data/missions.json`: editable mission deck
-- `dist/data/tactics.json`: editable tactic deck and quantities
-- `tests/game-engine.test.mjs`: core automated checks
-- `scripts/validate-build.mjs`: production asset/data validation
-- `scripts/build-visual-assets.py`: non-destructive source-PNG to WebP derivative pipeline for the original workstation
+- Physically test installation, offline relaunch, focus, and touch targets on the oldest supported Android tablet; desktop browser emulation cannot certify the real device.
+- Continue the broader vocabulary editorial queue in `dist/data/vocabulary-overrides.json`; only the six audit-priority corrections are approved in v1.2.
 
-## Safe next changes
-
-Keep the progressive disclosure principle intact: target word and part of speech first, help second. When updating offline assets, bump the `CACHE` value in `dist/sw.js`. When changing visible versions, keep `package.json`, `dist/index.html`, and `APP_VERSION` in `dist/app.js` aligned. Generated artwork paths are also listed in the service-worker `CORE` cache and in the production validator.
+Keep the progressive-disclosure order intact: target first, then mission, then teacher-controlled help after the initial attempt. For a release, keep the versions in `package.json`, `dist/index.html`, `dist/app.js`, and `dist/sw.js` aligned.

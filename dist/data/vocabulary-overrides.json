@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "source_policy": "The authoritative vocabulary.json export remains unchanged. Only reviewed supplementary fields are overridden at runtime.",
+  "overrides": {
+    "G3-APR-W2-08": {
+      "word": "trip",
+      "verified_against": "EIKEN Grade 3 April booklet page 2; Japanese sense 旅行",
+      "reason": "The draft definition used the unrelated drug-experience sense.",
+      "status": "approved",
+      "changes": {
+        "english_definition": {"before":"A hallucinatory experience induced by drugs","after":"A journey to a place and back, usually for a short time."},
+        "japanese_explanation": {"before":"麻薬によって生じる幻覚的経験。","after":"ある場所へ行って戻る旅行や外出のこと。"}
+      }
+    },
+    "P1-DEC-W3-05": {
+      "word": "cell",
+      "verified_against": "EIKEN Pre-1 December booklet page 8; Japanese senses 細胞、電池、(独)房",
+      "reason": "The draft definition described biology while the example used a prison cell.",
+      "status": "approved",
+      "changes": {
+        "english_definition": {"before":"(biology) the basic structural and functional unit of all organisms; they may exist as independent units of life (as in monads) or may form colonies or tissues as in higher plants and animals","after":"A small room in a prison; the word can also mean the basic unit of a living thing or a device that produces electricity."},
+        "japanese_explanation": {"before":"すべての生き物の形態的・機能的基本単位。それらは（単細胞生物のように）独立した生命単位として存在することもあり、またはより高等な植物や動物のように集落や組織を形成することもある。","after":"刑務所の小さな独房。ほかに、生物の細胞や電池という意味もあります。"}
+      }
+    },
+    "P1-JAN-W1-09": {
+      "word": "chemical",
+      "verified_against": "EIKEN Pre-1 January booklet page 10; noun sense 化学薬品、薬物",
+      "reason": "The record is a noun but the draft example used chemical as an adjective.",
+      "status": "approved",
+      "changes": {
+        "example_sentence": {"before":"It has a chemical taste to it.","after":"The laboratory stores each chemical in a clearly labeled container."}
+      }
+    },
+    "G2-MAY-W3-24": {
+      "word": "peak",
+      "verified_against": "EIKEN Grade 2 May booklet page 5; sense 頂点・山頂",
+      "reason": "The draft definition described a prosperous period while the example described a mountain.",
+      "status": "approved",
+      "changes": {
+        "english_definition": {"before":"The period of greatest prosperity or productivity","after":"The pointed top of a mountain, or the highest point of something."},
+        "japanese_explanation": {"before":"最大に繁栄、もしくは生産をあげている時期。","after":"山の頂上、または物事の最も高い点。"}
+      }
+    },
+    "G2-JUN-W1-03": {
+      "word": "lie",
+      "verified_against": "EIKEN Grade 2 June booklet page 7; sense 横になる、ある",
+      "reason": "The draft definition used the unrelated originate sense.",
+      "status": "approved",
+      "changes": {
+        "english_definition": {"before":"Originate (in)","after":"To rest in a flat position, or to be located somewhere."},
+        "japanese_explanation": {"before":"（に）起源する。","after":"横になっていること、またはある場所に位置すること。"}
+      }
+    },
+    "P2-SEP-W3-11": {
+      "word": "bark",
+      "verified_against": "EIKEN Pre-2 September booklet page 17; sense （犬などが）吠える",
+      "reason": "The draft definition described unfriendly human speech while the example described dogs.",
+      "status": "approved",
+      "changes": {
+        "english_definition": {"before":"Speak in an unfriendly tone","after":"To make the short, loud sound that a dog makes."},
+        "japanese_explanation": {"before":"不愛想な口調で話す。","after":"犬などが短く大きな声で吠えること。"}
+      }
+    }
+  },
+  "review_queue": ["G3-APR-W2-03", "G3-APR-W2-07", "G3-JUN-W3-20", "G2-JAN-W2-15", "P2-APR-W1-22", "P2-MAR-W2-08", "P1-JUN-W1-24"]
+}

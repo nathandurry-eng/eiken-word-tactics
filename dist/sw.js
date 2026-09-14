@@ -1,74 +1,77 @@
-const CACHE = "eiken-word-tactics-v1.1.0-physical-deck-2";
-const CORE = [
-  "./",
-  "./index.html",
-  "./styles.css",
-  "./app.js",
-  "./game-engine.js",
-  "./manifest.webmanifest",
-  "./icons/icon.svg",
-  "./icons/maskable.svg",
-  "./data/vocabulary.json",
-  "./data/missions.json",
-  "./data/tactics.json",
-  "./assets/art/easy/landscape-large.webp",
-  "./assets/art/easy/landscape-medium.webp",
-  "./assets/art/easy/landscape-mobile.webp",
-  "./assets/art/easy/deck-thumbnail.webp",
-  "./assets/art/medium/landscape-large.webp",
-  "./assets/art/medium/landscape-medium.webp",
-  "./assets/art/medium/landscape-mobile.webp",
-  "./assets/art/medium/deck-thumbnail.webp",
-  "./assets/art/hard/landscape-large.webp",
-  "./assets/art/hard/landscape-medium.webp",
-  "./assets/art/hard/landscape-mobile.webp",
-  "./assets/art/hard/deck-thumbnail.webp",
-  "./assets/art/challenge/landscape-large.webp",
-  "./assets/art/challenge/landscape-medium.webp",
-  "./assets/art/challenge/landscape-mobile.webp",
-  "./assets/art/challenge/deck-thumbnail.webp",
-  "./assets/decor/eiken-word-deck-emblem.webp",
-  "./assets/decor/eiken-plaque.webp",
-  "./assets/decor/nathan-seal.webp",
-  "./assets/decor/paper-texture.webp",
-  "./assets/cards/tactics/teacher-hint.webp",
-  "./assets/cards/tactics/definition-help.webp",
-  "./assets/cards/tactics/japanese-help.webp",
-  "./assets/cards/tactics/example-help.webp",
-  "./assets/cards/tactics/reroll.webp",
-  "./assets/cards/tactics/extra-time.webp",
-  "./assets/cards/tactics/second-chance.webp",
-  "./assets/cards/tactics/word-swap.webp",
-  "./assets/cards/missions/sentence.webp",
-  "./assets/cards/missions/question.webp",
-  "./assets/cards/missions/answer.webp",
-  "./assets/cards/missions/example.webp",
-  "./assets/cards/missions/opinion.webp",
-  "./assets/cards/missions/connection.webp",
-  "./assets/cards/missions/story.webp",
-  "./assets/cards/missions/combo.webp",
-  "./assets/cards/covers/mission-deck.webp",
-  "./assets/cards/covers/tactic-deck.webp"
+const CACHE_PREFIX = "eiken-word-tactics-";
+const VERSION = "v1.2.0";
+const CACHE = `${CACHE_PREFIX}${VERSION}`;
+const ESSENTIAL = [
+  "./", "./index.html", "./styles.css", "./app.js", "./game-engine.js", "./session-engine.js", "./timer-engine.js", "./mission-engine.js",
+  "./manifest.webmanifest", "./icons/icon.svg", "./icons/maskable.svg", "./data/missions.json", "./data/tactics.json",
+  "./data/runtime/index.json", "./data/runtime/eiken-4.json", "./data/runtime/eiken-3.json", "./data/runtime/eiken-pre-2.json", "./data/runtime/eiken-2.json", "./data/runtime/eiken-pre-1.json"
+];
+const OPTIONAL = [
+  ...["easy", "medium", "hard", "challenge"].flatMap((level) => ["landscape-large.webp", "landscape-medium.webp", "landscape-mobile.webp", "deck-thumbnail.webp"].map((file) => `./assets/art/${level}/${file}`)),
+  ...["eiken-word-deck-emblem", "eiken-plaque", "nathan-seal", "paper-texture"].map((file) => `./assets/decor/${file}.webp`),
+  ...["reroll", "extra-time", "word-swap"].map((file) => `./assets/cards/tactics/${file}.webp`),
+  ...["sentence", "question", "answer", "example", "opinion", "connection", "story", "combo"].map((file) => `./assets/cards/missions/${file}.webp`),
+  "./assets/cards/covers/mission-deck.webp", "./assets/cards/covers/tactic-deck.webp"
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(CORE)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await cache.addAll(ESSENTIAL);
+    await Promise.allSettled(OPTIONAL.map(async (url) => {
+      const response = await fetch(url);
+      if (response.ok) await cache.put(url, response);
+    }));
+  })());
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "ACTIVATE_UPDATE") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE).map((key) => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
 
+async function updateCache(request, response) {
+  if (!response?.ok || new URL(request.url).origin !== self.location.origin) return;
+  const cache = await caches.open(CACHE);
+  await cache.put(request, response.clone());
+}
+
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
-  event.respondWith(caches.match(event.request).then((cached) => {
-    const network = fetch(event.request).then((response) => {
-      if (response.ok && new URL(event.request.url).origin === self.location.origin) {
-        const copy = response.clone();
-        caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+  const { request } = event;
+  if (request.method !== "GET" || new URL(request.url).origin !== self.location.origin) return;
+  if (request.mode === "navigate") {
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
+        event.waitUntil(updateCache(new Request(new URL("./index.html", self.location).href, { credentials: "same-origin" }), response.clone()));
+        return response;
+      } catch {
+        return (await caches.match("./index.html")) || new Response("Offline copy unavailable", { status: 503, headers: { "Content-Type": "text/plain" } });
       }
+    })());
+    return;
+  }
+  event.respondWith((async () => {
+    const cached = await caches.match(request);
+    const network = fetch(request).then((response) => {
+      if (response.ok) event.waitUntil(updateCache(request, response));
       return response;
     });
-    return cached || network.catch(() => caches.match("./index.html"));
-  }));
+    if (cached) {
+      event.waitUntil(network.catch(() => undefined));
+      return cached;
+    }
+    try { return await network; }
+    catch {
+      if (request.destination === "image") return new Response("", { status: 204 });
+      return new Response("Offline resource unavailable", { status: 503, headers: { "Content-Type": "text/plain" } });
+    }
+  })());
 });

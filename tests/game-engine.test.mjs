@@ -7,7 +7,10 @@ import {
   buildVocabularyPool,
   parseCustomWords,
   selectByD20,
-  pickDistinct
+  pickDistinct,
+  createShuffledBag,
+  drawFromShuffledBag,
+  validateEndTarget
 } from "../dist/game-engine.js";
 
 const raw = { vocabulary: [
@@ -32,6 +35,8 @@ test("builds weekly, monthly, and review pools", () => {
   assert.equal(buildVocabularyPool(words, { level: "EIKEN 3", month: "April", selection: "week-1" }).length, 1);
   assert.equal(buildVocabularyPool(words, { level: "EIKEN 3", month: "April", selection: "mix" }).length, 2);
   assert.equal(buildVocabularyPool(words, { level: "EIKEN 3", selection: "review", reviewFrom: "April", reviewTo: "May" }).length, 3);
+  assert.equal(buildVocabularyPool(words, { level: "EIKEN 3", selection: "review", reviewFrom: "May", reviewTo: "April" }).length, 0);
+  assert.equal(buildVocabularyPool(words, { level: "EIKEN 3", selection: "review", reviewFrom: "Missing", reviewTo: "May" }).length, 0);
 });
 
 test("parses lines, commas, and tabular custom sets", () => {
@@ -47,17 +52,32 @@ test("maps an exact 20-word deck directly to the D20", () => {
   assert.equal(selectByD20(pool, 12).id, "12");
 });
 
-test("uses booklet positions for decks larger than 20", () => {
-  const pool = Array.from({ length: 60 }, (_, index) => ({ id: `${index + 1}`, position: (index % 20) + 1 }));
-  assert.equal(selectByD20(pool, 12, [], () => 0).position, 12);
-});
-
-test("lets a D20 reach words above position 20 in a larger weekly list", () => {
+test("uses non-literal uniform selection outside a single 20-entry list", () => {
   const pool = Array.from({ length: 30 }, (_, index) => ({ id: `${index + 1}`, position: index + 1 }));
-  assert.equal(selectByD20(pool, 1, [], () => 0.99).position, 21);
+  assert.equal(selectByD20(pool, 1, [], () => 0.99).position, 30);
+  assert.equal(selectByD20(pool, 20, [], () => 0).position, 1);
 });
 
 test("picks unique Word Bank cards", () => {
   const selected = pickDistinct(words, 3, [], () => 0);
   assert.equal(new Set(selected.map((word) => word.id)).size, 3);
+});
+
+test("shuffled bags cover the full pool and prevent a boundary repeat", () => {
+  const pool = Array.from({ length: 5 }, (_, index) => ({ id: `${index + 1}` }));
+  let state = { bag: [], lastId: "" };
+  const drawn = [];
+  for (let index = 0; index < pool.length; index += 1) {
+    const draw = drawFromShuffledBag(pool, state, () => 0);
+    drawn.push(draw.word.id);
+    state = draw.state;
+  }
+  assert.equal(new Set(drawn).size, pool.length);
+  const nextBag = createShuffledBag(pool, () => 0, drawn.at(-1));
+  assert.notEqual(nextBag[0], drawn.at(-1));
+});
+
+test("validates positive whole-number end targets", () => {
+  assert.equal(validateEndTarget("3"), 3);
+  for (const invalid of [0, -1, 1.5, "words", 51]) assert.equal(validateEndTarget(invalid), null);
 });

@@ -1,10 +1,10 @@
 {
   "name": "eiken-word-tactics",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/validate-build.mjs",
+    "build": "node scripts/build-runtime-vocabulary.mjs && node scripts/validate-build.mjs",
     "test": "node --test tests/*.test.mjs",
     "start": "node scripts/serve.mjs"
   },
