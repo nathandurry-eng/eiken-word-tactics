@@ -1,11 +1,12 @@
 const CACHE_PREFIX = "eiken-word-tactics-";
-const VERSION = "v1.2.0";
+const VERSION = "v1.3.1";
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const ESSENTIAL = [
   "./", "./index.html", "./styles.css", "./app.js", "./game-engine.js", "./session-engine.js", "./timer-engine.js", "./mission-engine.js",
-  "./manifest.webmanifest", "./icons/icon.svg", "./icons/maskable.svg", "./data/missions.json", "./data/tactics.json",
-  "./data/runtime/index.json", "./data/runtime/eiken-4.json", "./data/runtime/eiken-3.json", "./data/runtime/eiken-pre-2.json", "./data/runtime/eiken-2.json", "./data/runtime/eiken-pre-1.json"
+  "./manifest.webmanifest", "./icons/icon.svg", "./icons/maskable.svg", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png",
+  "./data/missions.json", "./data/tactics.json", "./data/runtime/index.json"
 ];
+const LEVEL_FILES = new Set(["eiken-4.json", "eiken-3.json", "eiken-pre-2.json", "eiken-2.json", "eiken-pre-1.json"]);
 const OPTIONAL = [
   ...["easy", "medium", "hard", "challenge"].flatMap((level) => ["landscape-large.webp", "landscape-medium.webp", "landscape-mobile.webp", "deck-thumbnail.webp"].map((file) => `./assets/art/${level}/${file}`)),
   ...["eiken-word-deck-emblem", "eiken-plaque", "nathan-seal", "paper-texture"].map((file) => `./assets/decor/${file}.webp`),
@@ -27,6 +28,20 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("message", (event) => {
   if (event.data?.type === "ACTIVATE_UPDATE") self.skipWaiting();
+  if (event.data?.type === "CACHE_LEVEL" && LEVEL_FILES.has(event.data.file)) {
+    event.waitUntil((async () => {
+      try {
+        const url = new URL(`./data/runtime/${event.data.file}`, self.location).href;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Deck request failed (${response.status}).`);
+        const cache = await caches.open(CACHE);
+        await cache.put(url, response);
+        event.source?.postMessage({ type: "LEVEL_CACHED", level: event.data.level });
+      } catch {
+        event.source?.postMessage({ type: "LEVEL_CACHE_FAILED", level: event.data.level });
+      }
+    })());
+  }
 });
 
 self.addEventListener("activate", (event) => {
@@ -70,7 +85,7 @@ self.addEventListener("fetch", (event) => {
     }
     try { return await network; }
     catch {
-      if (request.destination === "image") return new Response("", { status: 204 });
+      if (request.destination === "image") return new Response(null, { status: 204 });
       return new Response("Offline resource unavailable", { status: 503, headers: { "Content-Type": "text/plain" } });
     }
   })());

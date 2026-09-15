@@ -1,32 +1,131 @@
 {
-  "version": 1,
+  "version": 2,
   "source": "../vocabulary.json",
   "overrides": "../vocabulary-overrides.json",
   "levels": [
     {
       "level": "EIKEN 4",
       "file": "eiken-4.json",
-      "count": 630
+      "count": 630,
+      "coverage": {
+        "availableMonths": [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+          "March"
+        ],
+        "emptyMonths": [
+          "January",
+          "February"
+        ],
+        "populatedSets": 30,
+        "totalSets": 36
+      }
     },
     {
       "level": "EIKEN 3",
       "file": "eiken-3.json",
-      "count": 927
+      "count": 927,
+      "coverage": {
+        "availableMonths": [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+          "March"
+        ],
+        "emptyMonths": [
+          "January",
+          "February"
+        ],
+        "populatedSets": 30,
+        "totalSets": 36
+      }
     },
     {
       "level": "EIKEN Pre-2",
       "file": "eiken-pre-2.json",
-      "count": 1170
+      "count": 1170,
+      "coverage": {
+        "availableMonths": [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+          "March"
+        ],
+        "emptyMonths": [
+          "January",
+          "February"
+        ],
+        "populatedSets": 30,
+        "totalSets": 36
+      }
     },
     {
       "level": "EIKEN 2",
       "file": "eiken-2.json",
-      "count": 1113
+      "count": 1113,
+      "coverage": {
+        "availableMonths": [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+          "January"
+        ],
+        "emptyMonths": [
+          "February",
+          "March"
+        ],
+        "populatedSets": 30,
+        "totalSets": 36
+      }
     },
     {
       "level": "EIKEN Pre-1",
       "file": "eiken-pre-1.json",
-      "count": 1620
+      "count": 1620,
+      "coverage": {
+        "availableMonths": [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+          "January",
+          "February",
+          "March"
+        ],
+        "emptyMonths": [],
+        "populatedSets": 36,
+        "totalSets": 36
+      }
     }
   ]
 }

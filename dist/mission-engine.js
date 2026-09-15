@@ -4,13 +4,19 @@ const LEVEL_RANK = { "EIKEN 4": 1, "EIKEN 3": 2, "EIKEN Pre-2": 3, "EIKEN 2": 4,
 export function scaleMission(mission, level, mode) {
   const rank = LEVEL_RANK[level] || 3;
   const demands = rank <= 2
-    ? "Use the word naturally in one clear sentence."
+    ? "Level route: use the word naturally in one clear sentence and add one familiar detail."
     : rank === 3
-      ? "Use the word naturally and add one detail."
+      ? "Level route: give two or three connected sentences with a reason or example."
       : rank === 4
-        ? "Use the word naturally, then give a reason or relevant follow-up."
-        : "Take a moment to prepare, then speak for about 60 seconds with reasons and a relevant follow-up.";
-  return { ...mission, prompt: `${mission.prompt} ${demands}`, preparationSeconds: rank === 5 ? 20 : mode === "supported" ? 10 : 0 };
+        ? "Level route: state a clear view or comparison, support it, and respond to one follow-up."
+        : "Level route: develop the answer for about 60 seconds, include a trade-off, and respond to one challenge.";
+  const preparationSeconds = rank >= 5 ? 20 : rank >= 3 ? 15 : 10;
+  const listenerRole = mission.listenerRole || (/agree/i.test(mission.category)
+    ? "Agree or disagree and give one reason."
+    : /question|follow-up/i.test(mission.category)
+      ? "Ask or answer the named question, then listen to the response."
+      : "Listen for the target word, then ask one relevant follow-up.");
+  return { ...mission, prompt: `${mission.prompt} ${demands}`, preparationSeconds, listenerRole, supportedRoute: mode === "supported" };
 }
 
 export function missionIsCompatible(mission, word, mode, level) {

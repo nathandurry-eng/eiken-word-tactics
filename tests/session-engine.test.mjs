@@ -16,13 +16,13 @@ function sampleSession() {
   const pool = [{ id: "a", word: "alpha" }, { id: "b", word: "beta" }];
   return {
     id: "session-1", turnId: "turn-1", phase: "speak", ended: false,
-    config: { level: "EIKEN 3", mode: "standard" }, settings: { timers: { standard: 30 } }, pool,
+    config: { level: "EIKEN 3", mode: "standard", endType: "rounds", endTarget: 2 }, settings: { timers: { standard: 30 } }, pool,
     players: [{ name: "A", score: 0, turns: 0, tactics: [{ id: "word-swap" }] }], currentIndex: 0,
     bank: [pool[1]], mission: { id: "example-1" }, target: pool[0], targetChoices: [], roll: 4,
     recentWordIds: ["a"], recentMissionIds: [], bagState: { bag: ["b"], lastId: "a" }, reviewQueue: [], completedTurns: 0,
     reveals: new Set(), encountered: new Map([["a", pool[0]]]), difficulties: new Map(), judgedTurnIds: new Set(), history: [],
     timer: { duration: 30, remaining: 17, running: true, deadline: 1000 }, swapMode: false, pendingSwapId: null,
-    targetChangeUsed: false, supportedRetryUsed: false, attemptStarted: true, helpedThisTurn: false, bonusWord: pool[1], recall: null
+    targetChangeUsed: false, supportedRetryUsed: false, attemptStarted: true, helpedThisTurn: false, retryInProgress: false, bankOpen: true, bonusWord: pool[1], recall: null
   };
 }
 
@@ -45,8 +45,9 @@ test("late callbacks cannot target ended or replaced turns", () => {
 
 test("guarantees Word Swap plus one flexible resource", () => {
   const tactics = [{ id: "word-swap" }, { id: "reroll" }, { id: "extra-time" }];
-  const hand = guaranteedHand(tactics, 0, () => 0);
-  assert.deepEqual(hand.map((card) => card.id), ["word-swap", "reroll"]);
+  const hand = guaranteedHand(tactics, 0);
+  assert.deepEqual(hand.map((card) => card.id), ["word-swap", "flex"]);
+  assert.deepEqual(hand[1].options.map((card) => card.id), ["reroll", "extra-time"]);
 });
 
 test("later review waits for intervening turns", () => {
@@ -80,10 +81,12 @@ test("undo restores scores, difficulty, bank, tactics, bonus and a paused timer"
 test("versioned resume rejects malformed or stale data and recovers valid data", () => {
   const session = sampleSession();
   session.timer.running = false;
-  const saved = serializeResume(session, "1.2.0");
+  const saved = serializeResume(session, "1.3.1");
   assert.equal(validateResume(saved, "1.1.0", session.pool), null);
-  assert.equal(validateResume({ ...saved, poolIds: ["missing"] }, "1.2.0", session.pool), null);
-  const restored = validateResume(saved, "1.2.0", session.pool);
+  assert.equal(validateResume({ ...saved, poolIds: ["missing"] }, "1.3.1", session.pool), null);
+  assert.equal(validateResume({ ...saved, snapshot: { ...saved.snapshot, currentIndex: 99 } }, "1.3.1", session.pool), null);
+  assert.equal(validateResume({ ...saved, snapshot: { ...saved.snapshot, timer: null } }, "1.3.1", session.pool), null);
+  const restored = validateResume(saved, "1.3.1", session.pool);
   assert.equal(restored.target.id, "a");
   assert.equal(restored.timer.running, false);
 });

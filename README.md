@@ -2,7 +2,7 @@
 
 EIKEN Word Tactics is an offline-ready classroom speaking game for Japanese students. Its central rhythm is **retrieve → speak → receive help if necessary**: students see the target word first, attempt a communicative mission, and reveal support only when it is needed.
 
-Version: **v1.2.0**
+Version: **v1.3.1**
 
 ## What is included
 
@@ -12,13 +12,13 @@ Version: **v1.2.0**
 - Shuffled-bag selection for fair full-pool coverage; literal D20 mapping only for exact 20-word lists
 - Optional EIKEN Booklet Mode
 - 24 editable communicative missions
-- A safe face-up Word Swap plus a guaranteed Reroll or Extra Time tactic for every participant
-- Free Japanese, English definition, and example help after the initial attempt, followed by one unscored supported retry
-- 2–8 players or 2–4 teams, atomic 0/1/2 judgement, skip, and full-state undo (including after a win)
-- One deadline-based timer, visibility pause, optional countdown sound, rounds/points/manual endings
+- A safe face-up Word Swap plus one Flex Card that becomes Reroll or Extra Time when the participant uses it
+- Free staged Teacher Hint/Japanese/definition/example help after the initial attempt, followed by one unscored retry with revealed help hidden
+- Explicit next-listener roles, 2–8 players or 2–4 teams, atomic 0/1/2 scoring, Pass this turn, and full-state score undo (including after a win)
+- One deadline-based timer with level pacing or an off setting, visibility pause, optional countdown sound, and equal-round/unequal-race/manual endings
 - Versioned lesson resume, later-turn review queue, final recall, results, word review, and session statistics
 - Custom pasted word sets saved in `localStorage`
-- Installable PWA with a validated offline shell and updates activated between lessons
+- Installable PWA with PNG/SVG icons, a validated offline shell, on-demand caching of each selected level, and updates activated between lessons
 - A four-theme physical card-deck visual system built from the supplied Easy, Medium, Hard, and Challenge artwork
 - Illustrated Mission Cards and Tactic Cards, with responsive image derivatives for projector, tablet, and phone layouts
 - Keyboard focus styling, large touch targets, reduced-motion support, and responsive layouts
@@ -70,15 +70,18 @@ dist/
     tactics.json         # tactic availability and quantities
 scripts/
   build-runtime-vocabulary.mjs
+  build-icons.py          # regenerates the committed PNG install icons
   build-visual-assets.py  # manifest-driven WebP derivative builder
   visual-assets.manifest.example.json
   serve.mjs
   validate-build.mjs
 tests/
+  app-contract.test.mjs
   game-engine.test.mjs
   mission-engine.test.mjs
   session-engine.test.mjs
   timer-engine.test.mjs
+  service-worker.test.mjs
 ```
 
 ## Updating `vocabulary.json`
@@ -94,7 +97,7 @@ Replace [`dist/data/vocabulary.json`](dist/data/vocabulary.json) with the new JS
 
 Every usable row needs only a non-empty `word`. Missing Japanese, definition, or example content produces a friendly “not provided” message rather than stopping the game. Level, month, and week controls are derived from the actual file; list sizes are never assumed.
 
-The authoritative source file stays unchanged. The build applies only the reviewed entries in `vocabulary-overrides.json`, generates compact per-level files under `dist/data/runtime/`, and records quality flags for future editorial work. After replacing the source file, run:
+The authoritative source file stays unchanged. The build applies only the reviewed entries in `vocabulary-overrides.json`, generates compact per-level files under `dist/data/runtime/`, carries source coverage into the setup screen, and records quality flags for future editorial work. Definition/example help for the 721 entries marked “Meaning match needs review” is suppressed until an entry-ID correction is approved. After replacing the source file, run:
 
 ```bash
 npm test
@@ -106,7 +109,7 @@ Then increment the matching app and service-worker versions so installed copies 
 ## Editing missions and tactics
 
 - Edit `dist/data/missions.json` to revise the 24 reviewed prompts. Keep their compatibility, mode, level, and fallback metadata valid; the build checks key corrections.
-- Edit `dist/data/tactics.json` only for Word Swap, Reroll, and Extra Time. Every participant receives Word Swap plus one of the two flexible tactics.
+- Edit `dist/data/tactics.json` only for Word Swap, Reroll, and Extra Time. Every participant receives Word Swap plus one Flex Card and chooses Reroll or Extra Time when using it.
 
 ## Rebuilding the supplied artwork
 
@@ -162,7 +165,13 @@ Cloudflare Pages will rebuild automatically after each push to the production br
 
 ## PWA and offline notes
 
-The first successful visit installs the service worker and caches the essential app shell, missions, tactics, and compact vocabulary data. Optional artwork failures do not block installation. A temporary network interruption should not stop an active lesson, and waiting updates activate automatically once no lesson is in progress.
+The first successful visit installs the service worker and caches the essential app shell, missions, tactics, and install icons. The currently selected compact level deck is then cached deliberately; each later-selected level is added on demand. Optional artwork failures do not block installation. A temporary network interruption should not stop an active lesson, and waiting updates activate automatically once no lesson is in progress.
+
+## Browser support and audit evidence
+
+The code targets modern browsers with ES modules, service workers, optional chaining, and CSS Grid. It includes a JSON clone fallback, dialog fallback, shape-normalized local storage, reduced-motion behavior, and basic `aspect-ratio` fallback. Desktop tests and responsive emulation do not certify the oldest physical Android tablet; that device check remains an explicit release gate.
+
+The requirement-by-requirement cross-reference and reproducible evidence are kept in [`AUDIT-COMPLIANCE.md`](AUDIT-COMPLIANCE.md).
 
 ## Data and privacy
 

@@ -13,7 +13,7 @@ const missionArt = ["sentence", "question", "answer", "example", "opinion", "con
 const decorArt = ["eiken-word-deck-emblem", "eiken-plaque", "nathan-seal", "paper-texture"].map((file) => `assets/decor/${file}.webp`);
 const required = [
   "index.html", "styles.css", "app.js", "game-engine.js", "session-engine.js", "timer-engine.js", "mission-engine.js",
-  "manifest.webmanifest", "sw.js", "icons/icon.svg", "icons/maskable.svg", "data/vocabulary.json", "data/vocabulary-overrides.json",
+  "manifest.webmanifest", "sw.js", "icons/icon.svg", "icons/maskable.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "data/vocabulary.json", "data/vocabulary-overrides.json",
   "data/missions.json", "data/tactics.json", "data/runtime/index.json", ...levels.map((level) => `data/runtime/${level}.json`),
   ...levelArt, ...tacticArt, ...missionArt, ...decorArt, "assets/cards/covers/mission-deck.webp", "assets/cards/covers/tactic-deck.webp"
 ];
@@ -32,10 +32,16 @@ const overrides = JSON.parse(overrideText);
 const missionData = JSON.parse(missionText);
 const tacticData = JSON.parse(tacticText);
 const manifest = JSON.parse(manifestText);
+const packageData = JSON.parse(await readFile(join(repo, "package.json"), "utf8"));
 const runtimePayloads = await Promise.all(levels.map((level) => readFile(join(root, `data/runtime/${level}.json`), "utf8").then(JSON.parse)));
 const runtime = runtimePayloads.flatMap((payload) => normalizeVocabulary(payload));
 
 if (source.length !== 5460 || runtime.length !== source.length) throw new Error(`Vocabulary counts differ: source ${source.length}, runtime ${runtime.length}.`);
+if (new Set(runtime.map((word) => word.id)).size !== runtime.length) throw new Error("Runtime vocabulary IDs are not unique.");
+for (const word of runtime) {
+  if (!word.id || !word.setId || !word.level || !word.month || !Number.isInteger(word.week) || word.week < 1 || !Number.isInteger(word.position) || word.position < 1) throw new Error(`Invalid runtime identity or location: ${word.id || "unknown"}`);
+  if (word.sourceListSize && word.position > word.sourceListSize) throw new Error(`Runtime position exceeds its source list: ${word.id}`);
+}
 for (const level of ["EIKEN 4", "EIKEN 3", "EIKEN Pre-2", "EIKEN 2", "EIKEN Pre-1"]) {
   if (!runtime.some((item) => item.level === level)) throw new Error(`Missing runtime level: ${level}`);
 }
@@ -49,7 +55,8 @@ for (const [entryId, override] of Object.entries(overrides.overrides || {})) {
   }
 }
 
-if (missionData.version !== 2 || missionData.missions?.length !== 24) throw new Error("The reviewed 24-mission set is incomplete.");
+if (missionData.version !== 3 || missionData.missions?.length !== 24) throw new Error("The reviewed 24-mission set is incomplete.");
+if (new Set(missionData.missions.map((mission) => mission.id)).size !== 24 || missionData.missions.some((mission) => !mission.prompt || !mission.category || !mission.modes?.length || !mission.compatibility?.length)) throw new Error("Mission IDs or required routing fields are invalid.");
 for (const id of ["question-1", "hypothetical-2", "persuade-2"]) {
   if (!missionData.missions.some((mission) => mission.id === id && mission.compatibility?.length)) throw new Error(`Mission review missing: ${id}`);
 }
@@ -58,17 +65,24 @@ for (const id of ["word-swap", "reroll", "extra-time"]) if (!tacticData.tactics.
 for (const removed of ["teacher-hint", "japanese-help", "definition-help", "example-help", "second-chance"]) {
   if (tacticData.tactics.some((item) => item.id === removed)) throw new Error(`Paid help tactic still present: ${removed}`);
 }
-for (const marker of ["claimTurnOutcome", "scheduleForCurrentTurn", "supportedRetry", "captureTurnState", "validateResume", "drawFromShuffledBag", "chooseMission"]) {
+for (const marker of ["claimTurnOutcome", "scheduleForCurrentTurn", "supportedRetry", "captureTurnState", "validateResume", "drawFromShuffledBag", "chooseMission", "listener-role", "CACHE_LEVEL", "parseCustomWordsDetailed"]) {
   if (!appSource.includes(marker)) throw new Error(`Required runtime behavior is missing: ${marker}`);
 }
 if (html.includes('id="app" tabindex="-1" aria-live') || !html.includes("toast-region")) throw new Error("Announcements must stay outside the main region.");
-if (!manifest.icons?.length || manifest.display !== "standalone") throw new Error("PWA manifest is incomplete.");
-for (const marker of ["ESSENTIAL", "OPTIONAL", "event.waitUntil", 'request.mode === "navigate"', "CACHE_PREFIX", "Promise.allSettled"]) {
+if (!manifest.icons?.some((icon) => icon.type === "image/png" && icon.sizes === "192x192") || !manifest.icons?.some((icon) => icon.purpose === "maskable") || manifest.display !== "standalone") throw new Error("PWA manifest is incomplete.");
+if (!html.includes(`v${packageData.version}`) || !appSource.includes(`APP_VERSION = "${packageData.version}"`) || !serviceWorker.includes(`VERSION = "v${packageData.version}"`)) throw new Error("Visible, app, package, and service-worker versions do not match.");
+for (const marker of ["ESSENTIAL", "OPTIONAL", "LEVEL_FILES", "CACHE_LEVEL", "event.waitUntil", 'request.mode === "navigate"', "CACHE_PREFIX", "Promise.allSettled"]) {
   if (!serviceWorker.includes(marker)) throw new Error(`Service worker cache contract is missing: ${marker}`);
 }
-for (const asset of ["./session-engine.js", "./timer-engine.js", "./mission-engine.js", "./data/runtime/index.json", ...levels.map((level) => `./data/runtime/${level}.json`)]) {
+for (const asset of ["./session-engine.js", "./timer-engine.js", "./mission-engine.js", "./data/runtime/index.json", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png"]) {
   if (!serviceWorker.includes(asset)) throw new Error(`Essential offline asset missing: ${asset}`);
 }
+if (!serviceWorker.includes("LEVEL_FILES.has") || !serviceWorker.includes("LEVEL_CACHED")) throw new Error("Selected-level offline caching is incomplete.");
+if ((runtime.filter((word) => word.quality?.definition === "needs-review")).length !== 721) throw new Error("Sense-review fields are not preserved as the audited 721-entry suppression queue.");
+const runtimeIndex = JSON.parse(await readFile(join(root, "data/runtime/index.json"), "utf8"));
+if (runtimeIndex.version !== 2 || !runtimeIndex.levels.every((entry) => Array.isArray(entry.coverage?.emptyMonths))) throw new Error("Source coverage metadata is incomplete.");
+if (runtimeIndex.levels.reduce((sum, entry) => sum + entry.count, 0) !== runtime.length) throw new Error("Runtime index counts do not match the generated decks.");
+if (runtimeIndex.levels.reduce((sum, entry) => sum + entry.coverage.totalSets, 0) !== 180 || runtimeIndex.levels.reduce((sum, entry) => sum + entry.coverage.populatedSets, 0) !== 156) throw new Error("Audited 156/180 source coverage changed unexpectedly.");
 if (!assetScript.includes("--manifest") || !assetScript.includes("--source-dir") || /C:\\\\Users\\\\/.test(assetScript)) throw new Error("Visual asset builder still depends on a hard-coded Windows source path.");
 
-console.log(`Validated EIKEN Word Tactics v1.2.0: ${runtime.length.toLocaleString()} runtime words, ${missionData.missions.length} reviewed missions, ${tacticData.tactics.length} tactics, and the revised offline contract.`);
+console.log(`Validated EIKEN Word Tactics v${packageData.version}: ${runtime.length.toLocaleString()} runtime words, ${missionData.missions.length} reviewed missions, ${tacticData.tactics.length} tactic behaviors, and the selected-level offline contract.`);

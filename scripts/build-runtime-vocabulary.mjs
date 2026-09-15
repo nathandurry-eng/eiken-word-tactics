@@ -18,11 +18,12 @@ function corrected(record) {
   const review = overrides[record.entry_id];
   const value = { ...record };
   for (const [field, change] of Object.entries(review?.changes || {})) value[field] = change.after;
+  const senseNeedsReview = String(value.review_status || "").includes("Meaning match needs review");
   const quality = {
     japanese: value.japanese_meaning ? "source" : "missing",
-    definition: review?.changes?.english_definition ? "reviewed" : value.english_definition ? "draft" : "missing",
-    japaneseExplanation: review?.changes?.japanese_explanation ? "reviewed" : value.japanese_explanation ? "draft" : "missing",
-    example: review?.changes?.example_sentence ? "reviewed" : value.example_sentence ? "draft" : "missing"
+    definition: review?.changes?.english_definition ? "reviewed" : value.english_definition ? (senseNeedsReview ? "needs-review" : "draft") : "missing",
+    japaneseExplanation: review?.changes?.japanese_explanation ? "reviewed" : value.japanese_explanation ? (senseNeedsReview ? "needs-review" : "draft") : "missing",
+    example: review?.changes?.example_sentence ? "reviewed" : value.example_sentence ? (senseNeedsReview ? "needs-review" : "draft") : "missing"
   };
   return {
     id: value.entry_id,
@@ -44,12 +45,16 @@ function corrected(record) {
 }
 
 await mkdir(outputDir, { recursive: true });
-const index = { version: 1, source: "../vocabulary.json", overrides: "../vocabulary-overrides.json", levels: [] };
+const index = { version: 2, source: "../vocabulary.json", overrides: "../vocabulary-overrides.json", levels: [] };
 for (const [level, slug] of Object.entries(slugs)) {
   const words = source.filter((record) => record.level === level).map(corrected);
   const file = `${slug}.json`;
-  await writeFile(join(outputDir, file), JSON.stringify({ version: 1, level, words }));
-  index.levels.push({ level, file, count: words.length });
+  const sourceSets = Array.isArray(sourcePayload.set_summary) ? sourcePayload.set_summary.filter((set) => set.Level === level) : [];
+  const emptyMonths = [...new Set(sourceSets.filter((set) => Number(set["Source Entries"]) === 0).map((set) => set.Month))];
+  const availableMonths = [...new Set(sourceSets.filter((set) => Number(set["Source Entries"]) > 0).map((set) => set.Month))];
+  const coverage = { availableMonths, emptyMonths, populatedSets: sourceSets.filter((set) => Number(set["Source Entries"]) > 0).length, totalSets: sourceSets.length };
+  await writeFile(join(outputDir, file), JSON.stringify({ version: 2, level, coverage, words }));
+  index.levels.push({ level, file, count: words.length, coverage });
 }
 await writeFile(join(outputDir, "index.json"), JSON.stringify(index, null, 2) + "\n");
 console.log(`Generated ${source.length.toLocaleString()} compact runtime records from the unchanged source export.`);

@@ -18,11 +18,17 @@ export function claimTurnOutcome(session, turnId) {
   return true;
 }
 
-export function guaranteedHand(tactics, playerIndex = 0, random = Math.random) {
+export function guaranteedHand(tactics, playerIndex = 0) {
   const swap = tactics.find((card) => card.id === "word-swap");
   const flexible = tactics.filter((card) => card.id === "reroll" || card.id === "extra-time");
-  const second = flexible[Math.floor(random() * flexible.length)] || flexible[0];
-  return [swap, second].filter(Boolean).map((card, index) => ({
+  const flexCard = flexible.length ? {
+    id: "flex",
+    name: "FLEX CARD",
+    description: "Choose Reroll or Extra Time when you use it.",
+    icon: "◇",
+    options: flexible.map((card) => ({ ...card }))
+  } : null;
+  return [swap, flexCard].filter(Boolean).map((card, index) => ({
     ...card,
     instanceId: `${card.id}-${playerIndex}-${index}-${makeIdentity("card")}`
   }));
@@ -51,12 +57,12 @@ export function takeEligibleReview(session) {
   return session.pool.find((word) => word.id === item.wordId) || null;
 }
 
-function clone(value) {
+export function cloneData(value) {
   return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
 }
 
 export function captureTurnState(session) {
-  const copy = clone({
+  const copy = cloneData({
     config: session.config,
     settings: session.settings,
     players: session.players,
@@ -78,6 +84,8 @@ export function captureTurnState(session) {
     supportedRetryUsed: session.supportedRetryUsed,
     attemptStarted: session.attemptStarted,
     helpedThisTurn: session.helpedThisTurn,
+    retryInProgress: session.retryInProgress,
+    bankOpen: session.bankOpen,
     bonusWord: session.bonusWord,
     timer: session.timer,
     turnId: session.turnId,
@@ -95,7 +103,7 @@ export function captureTurnState(session) {
 export function restoreTurnState(session, snapshot) {
   const pool = session.pool;
   const history = session.history;
-  Object.assign(session, clone(snapshot), { pool, history });
+  Object.assign(session, cloneData(snapshot), { pool, history });
   session.reveals = new Set(snapshot.reveals || []);
   session.encountered = new Map(snapshot.encountered || []);
   session.difficulties = new Map(snapshot.difficulties || []);
@@ -121,14 +129,20 @@ export function serializeResume(session, appVersion) {
 
 export function validateResume(value, appVersion, vocabulary) {
   if (!value || value.saveVersion !== SAVE_VERSION || value.appVersion !== appVersion) return null;
-  if (!Array.isArray(value.poolIds) || !value.poolIds.length || !value.snapshot || !Array.isArray(value.snapshot.players)) return null;
-  if (!value.snapshot.players.length || !value.snapshot.players.every((player) => player && typeof player.name === "string" && Number.isFinite(player.score))) return null;
-  const available = [...vocabulary, ...(Array.isArray(value.poolData) ? value.poolData : [])];
+  const snapshot = value.snapshot;
+  if (!Array.isArray(value.poolIds) || !value.poolIds.length || !snapshot || typeof snapshot !== "object" || !snapshot.config || !snapshot.settings || !Array.isArray(snapshot.players)) return null;
+  if (!["supported", "standard", "challenge"].includes(snapshot.config.mode) || !["points", "rounds", "manual"].includes(snapshot.config.endType)) return null;
+  if (!snapshot.players.length || !snapshot.players.every((player) => player && typeof player.name === "string" && Number.isFinite(player.score) && Number.isInteger(player.turns) && player.turns >= 0 && Array.isArray(player.tactics))) return null;
+  if (!Number.isInteger(snapshot.currentIndex) || snapshot.currentIndex < 0 || snapshot.currentIndex >= snapshot.players.length) return null;
+  if (!snapshot.timer || !Number.isFinite(snapshot.timer.remaining) || snapshot.timer.remaining < 0 || !Array.isArray(snapshot.bank) || !Array.isArray(snapshot.reviewQueue)) return null;
+  const poolData = Array.isArray(value.poolData) ? value.poolData.filter((word) => word && typeof word.id === "string" && typeof word.word === "string" && word.word.trim()) : [];
+  const available = [...(Array.isArray(vocabulary) ? vocabulary : []), ...poolData];
   const byId = new Map(available.map((word) => [word.id, word]));
   const pool = value.poolIds.map((id) => byId.get(id)).filter(Boolean);
   if (!pool.length || pool.length !== value.poolIds.length) return null;
-  const session = { pool, history: Array.isArray(value.history) ? value.history : [] };
-  restoreTurnState(session, value.snapshot);
+  const history = Array.isArray(value.history) ? value.history.filter((entry) => entry && entry.snapshot && typeof entry.turnId === "string").slice(-20) : [];
+  const session = { pool, history };
+  restoreTurnState(session, snapshot);
   session.id = makeIdentity("resumed");
   return session;
 }

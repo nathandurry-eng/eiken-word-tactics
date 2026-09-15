@@ -6,6 +6,7 @@ import {
   getWeeks,
   buildVocabularyPool,
   parseCustomWords,
+  parseCustomWordsDetailed,
   selectByD20,
   pickDistinct,
   createShuffledBag,
@@ -45,6 +46,9 @@ test("parses lines, commas, and tabular custom sets", () => {
   const table = parseCustomWords("word\tpart of speech\tJapanese\nborrow\tverb\t借りる");
   assert.equal(table.length, 1);
   assert.equal(table[0].partOfSpeech, "verb");
+  const detailed = parseCustomWordsDetailed("word\tpart of speech\nborrow\tverb\n\tmissing");
+  assert.equal(detailed.words.length, 1);
+  assert.equal(detailed.rejected, 1);
 });
 
 test("maps an exact 20-word deck directly to the D20", () => {
@@ -73,8 +77,9 @@ test("shuffled bags cover the full pool and prevent a boundary repeat", () => {
     state = draw.state;
   }
   assert.equal(new Set(drawn).size, pool.length);
-  const nextBag = createShuffledBag(pool, () => 0, drawn.at(-1));
-  assert.notEqual(nextBag[0], drawn.at(-1));
+  const last = drawn[drawn.length - 1];
+  const nextBag = createShuffledBag(pool, () => 0, last);
+  assert.notEqual(nextBag[0], last);
 });
 
 test("validates positive whole-number end targets", () => {

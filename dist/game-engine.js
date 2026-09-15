@@ -56,23 +56,25 @@ export function buildVocabularyPool(vocabulary, config) {
   return monthly;
 }
 
-export function parseCustomWords(input) {
+export function parseCustomWordsDetailed(input) {
   const text = String(input || "").trim();
-  if (!text) return [];
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!text) return { words: [], rejected: 0 };
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
   let rows = [];
 
   if (lines.some((line) => line.includes("\t"))) {
     rows = lines.map((line) => line.split("\t").map((cell) => cell.trim()));
   } else if (lines.length === 1 && lines[0].includes(",")) {
-    rows = lines[0].split(",").map((word) => [word.trim()]);
+    rows = lines[0].trim().split(",").map((word) => [word.trim()]);
   } else {
-    rows = lines.flatMap((line) => line.includes(",") ? line.split(",").map((word) => [word.trim()]) : [[line]]);
+    rows = lines.flatMap((line) => line.includes(",") ? line.split(",").map((word) => [word.trim()]) : [[line.trim()]]);
   }
 
   const headerWords = new Set(["word", "vocabulary", "english", "単語"]);
-  return rows
-    .filter((row) => row[0] && !headerWords.has(row[0].toLowerCase()))
+  const contentRows = rows.filter((row) => !headerWords.has(String(row[0] || "").toLowerCase()));
+  const rejected = contentRows.filter((row) => !String(row[0] || "").trim()).length;
+  const words = contentRows
+    .filter((row) => String(row[0] || "").trim())
     .map((row, index) => ({
       id: `custom-${index + 1}-${row[0].toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
       level: "Custom",
@@ -87,6 +89,11 @@ export function parseCustomWords(input) {
       japaneseExplanation: "",
       example: row[4] || ""
     }));
+  return { words, rejected };
+}
+
+export function parseCustomWords(input) {
+  return parseCustomWordsDetailed(input).words;
 }
 
 export function selectByD20(pool, roll, recentIds = [], random = Math.random) {
